@@ -1,0 +1,9 @@
+{
+  "name": "ben-billetterie-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend serverless (Vercel) pour l'agent BEN Billetterie : appelle l'API Anthropic côté serveur et écrit les entretiens dans Supabase.",
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -104,7 +104,48 @@
     line-height: 1.6;
     margin: 0 0 1.25rem;
   }
-  .identity-form {
+  .sector-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.6rem;
+    max-width: 460px;
+    margin-bottom: 1.5rem;
+  }
+  @media (max-width: 480px) {
+    .sector-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  .sector-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+    font-family: 'Source Sans 3', sans-serif;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--ink);
+    background: var(--paper-raised);
+    border: 1px solid var(--hairline-strong);
+    border-radius: 8px;
+    padding: 0.8rem 0.5rem;
+    cursor: pointer;
+    text-align: center;
+    line-height: 1.25;
+  }
+  .sector-card span { display: block; }
+  .sector-card:hover {
+    border-color: var(--moss);
+    background: #fff;
+  }
+  .change-sector {
+    margin: 0 0 0.5rem;
+  }
+  .change-sector a {
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+    text-decoration: none;
+  }
+  .change-sector a:hover { text-decoration: underline; }
+  .identity-form, .other-sector-form {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
@@ -251,15 +292,40 @@
   <div class="masthead">
     <div>
       <h1>Agent TicketMatch</h1>
-      <p class="subhead">Entretien diagnostic dédié aux exploitants de parcs animaliers et zoos.</p>
+      <p class="subhead">Entretien diagnostic pour identifier la solution de billetterie adaptée à votre activité.</p>
     </div>
-    <div class="vertical">ZOO / PARC ANIMALIER</div>
+    <div class="vertical" id="verticalBadge" style="display:none;"></div>
   </div>
 
   <div class="transcript" id="transcript">
     <div class="empty-state" id="emptyState">
-      <p>Cet entretien nous permet d'identifier les solutions de billetterie les plus adaptées à votre situation, parmi les prestataires référencés sur TicketMatch. Répondez simplement aux questions au fil de la conversation — comptez 20 à 30 minutes, selon la richesse de vos réponses.</p>
-      <div class="identity-form">
+      <p id="introText">Cet entretien nous permet d'identifier les solutions de billetterie les plus adaptées à votre situation, parmi les prestataires référencés sur TicketMatch. Commencez par indiquer votre secteur d'activité.</p>
+
+      <div class="sector-grid" id="sectorGrid">
+        <button type="button" class="sector-card" data-vertical="spectacle_vivant" data-label="Spectacle vivant">🎭<span>Spectacle vivant</span></button>
+        <button type="button" class="sector-card" data-vertical="musees_culture" data-label="Musées &amp; culture">🏛️<span>Musées &amp; culture</span></button>
+        <button type="button" class="sector-card" data-vertical="festivals_concerts" data-label="Festivals &amp; Concerts">🎪<span>Festivals &amp; Concerts</span></button>
+        <button type="button" class="sector-card" data-vertical="sport" data-label="Sport">⚽<span>Sport</span></button>
+        <button type="button" class="sector-card" data-vertical="parcs_attractions" data-label="Parcs d'attractions">🎡<span>Parcs d'attractions</span></button>
+        <button type="button" class="sector-card" data-vertical="loisirs_indoor" data-label="Activités de loisirs indoors">🎳<span>Loisirs indoors</span></button>
+        <button type="button" class="sector-card" data-vertical="parcs_aquatiques" data-label="Parcs aquatiques">🏊<span>Parcs aquatiques</span></button>
+        <button type="button" class="sector-card" data-vertical="loisirs_outdoor" data-label="Activités de loisirs outdoors">🌲<span>Loisirs outdoors</span></button>
+        <button type="button" class="sector-card" data-vertical="zoo" data-label="Zoos &amp; parcs animaliers">🦁<span>Zoos &amp; parcs animaliers</span></button>
+        <button type="button" class="sector-card" id="otherSectorBtn">❓<span>Autre / je ne sais pas</span></button>
+      </div>
+
+      <div class="other-sector-form" id="otherSectorForm" style="display:none;">
+        <p class="change-sector"><a href="#" id="backToGridLink">← Retour aux secteurs</a></p>
+        <div class="identity-row">
+          <label for="otherSectorInput">Décrivez votre activité en quelques mots</label>
+          <input type="text" id="otherSectorInput" class="field identity-input" placeholder="Réalité virtuelle, escape game...">
+        </div>
+        <div class="identity-error" id="otherSectorError"></div>
+        <button class="start" id="otherSectorContinueBtn" type="button">Continuer</button>
+      </div>
+
+      <div class="identity-form" id="identityForm" style="display:none;">
+        <p class="change-sector"><a href="#" id="changeSectorLink">← Changer de secteur</a></p>
         <div class="identity-row">
           <label for="prenomInput">Prénom</label>
           <input type="text" id="prenomInput" class="field identity-input" placeholder="Camille">
@@ -422,9 +488,20 @@ function buildSystemPrompt(visitor) {
 */
 
 let messages = [];
-let visitor = { prenom: '', nom: '', fonction: '', email: '', nomSite: '' };
+let visitor = { prenom: '', nom: '', fonction: '', email: '', nomSite: '', vertical: '', verticalLabel: '' };
 const transcriptEl = document.getElementById('transcript');
 const emptyStateEl = document.getElementById('emptyState');
+const introText = document.getElementById('introText');
+const sectorGrid = document.getElementById('sectorGrid');
+const identityForm = document.getElementById('identityForm');
+const changeSectorLink = document.getElementById('changeSectorLink');
+const verticalBadge = document.getElementById('verticalBadge');
+const otherSectorBtn = document.getElementById('otherSectorBtn');
+const otherSectorForm = document.getElementById('otherSectorForm');
+const otherSectorInput = document.getElementById('otherSectorInput');
+const otherSectorError = document.getElementById('otherSectorError');
+const otherSectorContinueBtn = document.getElementById('otherSectorContinueBtn');
+const backToGridLink = document.getElementById('backToGridLink');
 const startBtn = document.getElementById('startBtn');
 const prenomInput = document.getElementById('prenomInput');
 const nomInput = document.getElementById('nomInput');
@@ -447,6 +524,64 @@ const finalMessage = document.getElementById('finalMessage');
 const syntheseEdit = document.getElementById('syntheseEdit');
 let currentEntretienId = null;
 let pendingSyntheseTexte = '';
+
+function selectSector(vertical, label) {
+  visitor.vertical = vertical;
+  visitor.verticalLabel = label;
+  sectorGrid.style.display = 'none';
+  introText.style.display = 'none';
+  identityForm.style.display = 'flex';
+  verticalBadge.textContent = label.toUpperCase();
+  verticalBadge.style.display = 'block';
+  prenomInput.focus();
+}
+
+function resetSectorSelection() {
+  visitor.vertical = '';
+  visitor.verticalLabel = '';
+  sectorGrid.style.display = 'grid';
+  introText.style.display = 'block';
+  identityForm.style.display = 'none';
+  otherSectorForm.style.display = 'none';
+  verticalBadge.style.display = 'none';
+}
+
+sectorGrid.querySelectorAll('.sector-card[data-vertical]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    selectSector(btn.getAttribute('data-vertical'), btn.getAttribute('data-label'));
+  });
+});
+
+otherSectorBtn.addEventListener('click', () => {
+  sectorGrid.style.display = 'none';
+  introText.style.display = 'none';
+  otherSectorForm.style.display = 'flex';
+  otherSectorInput.focus();
+});
+
+backToGridLink.addEventListener('click', (e) => {
+  e.preventDefault();
+  otherSectorForm.style.display = 'none';
+  sectorGrid.style.display = 'grid';
+  introText.style.display = 'block';
+});
+
+otherSectorContinueBtn.addEventListener('click', () => {
+  const description = otherSectorInput.value.trim();
+  if (!description) {
+    otherSectorError.textContent = 'Merci de préciser brièvement votre activité pour continuer.';
+    otherSectorInput.focus();
+    return;
+  }
+  otherSectorError.textContent = '';
+  otherSectorForm.style.display = 'none';
+  selectSector('autre', description);
+});
+
+changeSectorLink.addEventListener('click', (e) => {
+  e.preventDefault();
+  resetSectorSelection();
+});
 
 function renderTurn(role, text) {
   const turn = document.createElement('div');
@@ -589,6 +724,10 @@ async function callAgent(userText, typingText, options) {
 }
 
 startBtn.addEventListener('click', () => {
+  if (!visitor.vertical) {
+    identityError.textContent = 'Merci de sélectionner votre secteur d\'activité pour démarrer.';
+    return;
+  }
   const prenom = prenomInput.value.trim();
   const nom = nomInput.value.trim();
   const fonction = fonctionInput.value.trim();
@@ -620,7 +759,7 @@ startBtn.addEventListener('click', () => {
     return;
   }
   identityError.textContent = '';
-  visitor = { prenom: prenom, nom: nom, fonction: fonction, email: email, nomSite: nomSiteInput.value.trim() };
+  visitor = { prenom: prenom, nom: nom, fonction: fonction, email: email, nomSite: nomSiteInput.value.trim(), vertical: visitor.vertical, verticalLabel: visitor.verticalLabel };
   emptyStateEl.remove();
   composerEl.style.display = 'flex';
   hintEl.style.display = 'block';

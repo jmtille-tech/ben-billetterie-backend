@@ -1,5 +1,5 @@
 // api/chat.js
-// Backend serverless function pour BEN Billetterie.
+// Backend serverless function pour Agent TicketMatch.
 // - Reçoit { visitor, messages, options } depuis le prototype front-end.
 // - Reconstruit le system prompt côté serveur (jamais exposé au navigateur).
 // - Appelle l'API Anthropic avec la clé stockée en variable d'environnement (ANTHROPIC_API_KEY).
@@ -7,7 +7,7 @@
 //   côté serveur (SUPABASE_URL / SUPABASE_ANON_KEY), ce qui évite le blocage réseau
 //   rencontré en appelant Supabase directement depuis un navigateur en bac à sable.
 
-const SYSTEM_PROMPT_BASE = `Tu es l'agent d'entretien de BEN Billetterie, un module de diagnostic destiné aux exploitants de parcs animaliers et zoologiques qui envisagent de faire évoluer leur solution de billetterie. Tu conduis un entretien conversationnel avec un interlocuteur côté exploitant (direction, responsable billetterie, responsable marketing selon les cas).
+const SYSTEM_PROMPT_BASE = `Tu es l'Agent TicketMatch, un module de diagnostic destiné aux exploitants de parcs animaliers et zoologiques qui envisagent de faire évoluer leur solution de billetterie. Tu conduis un entretien conversationnel avec un interlocuteur côté exploitant (direction, responsable billetterie, responsable marketing selon les cas).
 
 Ton objectif n'est pas de remplir un formulaire mais de comprendre en profondeur le fonctionnement actuel de la billetterie et les besoins réels de l'exploitant, afin d'alimenter une trame de cahier des charges billetterie (BtoC/BtoB) qui pourra ensuite servir à qualifier et comparer des prestataires.
 
@@ -28,7 +28,7 @@ Règles de conduite de l'entretien :
 
 Déroulé de l'entretien :
 
-Ouverture : ton tout premier message commence par saluer l'interlocuteur par son prénom et te présenter (ex. "Bonjour {prénom}, je suis BEN, l'agent diagnostic de..."). Rappelle ensuite l'objectif, la durée indicative (20 à 30 minutes selon la richesse des réponses), et précise que certaines questions ne seront posées que si elles sont pertinentes. Indique aussi que cet entretien permettra, une fois analysé, d'identifier les solutions de billetterie les plus adaptées à sa situation parmi les prestataires référencés sur TicketMatch — en une phrase courte, sans s'y attarder.
+Ouverture : ton tout premier message commence par saluer l'interlocuteur par son prénom et te présenter (ex. "Bonjour {prénom}, je suis l'Agent TicketMatch..."). Rappelle ensuite l'objectif, la durée indicative (20 à 30 minutes selon la richesse des réponses), et précise que certaines questions ne seront posées que si elles sont pertinentes. Indique aussi que cet entretien permettra, une fois analysé, d'identifier les solutions de billetterie les plus adaptées à sa situation parmi les prestataires référencés sur TicketMatch — en une phrase courte, sans s'y attarder.
 
 Thème 1 — Contexte & objectifs : solution actuelle et ancienneté ; ce qui motive une réflexion de changement (coût, limites techniques, fin de contrat, insatisfaction) ; échéance contractuelle à respecter ; objectifs prioritaires visés par le changement (développer la vente en ligne, développer la vente sur place, fidéliser, améliorer l'expérience visiteur, réduire les coûts, gagner en autonomie de gestion...) — éventuellement classés par ordre de priorité si l'exploitant en a plusieurs en tête.
 
@@ -401,7 +401,7 @@ async function notifyValidation(entretien) {
   const adminEmail = process.env.ADMIN_NOTIFY_EMAIL || 'jmtille@neuroplayxperiences.com';
   notifications.admin = await sendEmail(
     adminEmail,
-    'BEN Billetterie — nouvel entretien validé : ' + nomSite,
+    'Agent TicketMatch — nouvel entretien validé : ' + nomSite,
     '<p>L\'exploitant <strong>' + (entretien.prenom || '') + ' ' + (entretien.nom || '') + '</strong> (' + nomSite + ') a validé son récapitulatif.</p>' +
     '<p><a href="' + ADMIN_URL + '">Ouvrir l\'espace interne</a> pour consulter le récapitulatif et la shortlist d\'opérateurs (déjà calculée).</p>'
   );
@@ -410,11 +410,11 @@ async function notifyValidation(entretien) {
   if (entretien.email && CALENDLY_URL) {
     notifications.exploitant = await sendEmail(
       entretien.email,
-      'BEN Billetterie — merci pour votre entretien',
+      'Agent TicketMatch — merci pour votre entretien',
       '<p>Bonjour ' + (entretien.prenom || '') + ',</p>' +
       '<p>Merci d\'avoir validé votre récapitulatif. Nous analysons dès à présent votre profil pour identifier les solutions de billetterie les plus adaptées parmi les prestataires référencés sur TicketMatch.</p>' +
       '<p>Pour échanger sur les prochaines étapes, vous pouvez dès maintenant réserver un créneau ici : <a href="' + CALENDLY_URL + '">' + CALENDLY_URL + '</a></p>' +
-      '<p>À très bientôt,<br>L\'équipe BEN Billetterie</p>'
+      '<p>À très bientôt,<br>L\'équipe TicketMatch</p>'
     );
   }
 

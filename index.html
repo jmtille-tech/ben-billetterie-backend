@@ -145,6 +145,11 @@
     text-decoration: none;
   }
   .change-sector a:hover { text-decoration: underline; }
+  .duration-hint {
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    margin: -0.3rem 0 0;
+  }
   .identity-form, .other-sector-form {
     display: flex;
     flex-direction: column;
@@ -299,7 +304,7 @@
 
   <div class="transcript" id="transcript">
     <div class="empty-state" id="emptyState">
-      <p id="introText">Cet entretien nous permet d'identifier les solutions de billetterie les plus adaptées à votre situation, parmi les prestataires référencés sur TicketMatch. Commencez par indiquer votre secteur d'activité.</p>
+      <p id="introText">Cet entretien nous permet d'identifier les solutions de billetterie les plus adaptées à votre situation, parmi les prestataires référencés sur TicketMatch. Comptez 20 à 30 minutes, selon la richesse de vos réponses. Commencez par indiquer votre secteur d'activité.</p>
 
       <div class="sector-grid" id="sectorGrid">
         <button type="button" class="sector-card" data-vertical="spectacle_vivant" data-label="Spectacle vivant">🎭<span>Spectacle vivant</span></button>
@@ -352,6 +357,7 @@
         </div>
         <div class="identity-error" id="identityError"></div>
         <button class="start" id="startBtn">Démarrer l'entretien</button>
+        <p class="duration-hint">10 questions · 20 à 30 minutes</p>
       </div>
     </div>
   </div>

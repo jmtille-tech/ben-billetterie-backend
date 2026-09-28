@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://assets.calendly.com/assets/external/widget.css" rel="stylesheet">
 <style>
   :root {
     --paper: #EEF0E4;
@@ -290,6 +291,31 @@
     outline: none;
     border-color: var(--moss);
   }
+  .calendly-wrap {
+    margin-top: 1.25rem;
+    border-top: 1px solid var(--hairline-strong);
+    padding-top: 1.25rem;
+  }
+  .calendly-intro {
+    font-size: 0.88rem;
+    color: var(--ink-soft);
+    margin: 0 0 0.75rem;
+  }
+  .calendly-inline-widget {
+    min-width: 280px;
+    height: 680px;
+  }
+  .calendly-confirmed {
+    padding: 1.5rem;
+    background: var(--paper-raised);
+    border: 1px solid var(--hairline-strong);
+    border-radius: 6px;
+  }
+  .calendly-confirmed p {
+    margin: 0;
+    font-size: 0.98rem;
+    color: var(--ink);
+  }
 </style>
 </head>
 <body>
@@ -382,9 +408,17 @@
 
   <div id="finalSection" style="display:none;">
     <p class="subhead" id="finalMessage" style="max-width:56ch;"></p>
+    <div class="calendly-wrap" id="calendlyWrap" style="display:none;">
+      <p class="calendly-intro" id="calendlyIntro">Vous pouvez dès à présent réserver un créneau pour en discuter :</p>
+      <div id="calendlyInline" class="calendly-inline-widget"></div>
+      <div id="calendlyConfirmed" class="calendly-confirmed" style="display:none;">
+        <p>Rendez-vous confirmé — merci ! Vous allez recevoir une confirmation par email. À très vite.</p>
+      </div>
+    </div>
   </div>
 </div>
 
+<script src="https://assets.calendly.com/assets/external/widget.js"></script>
 <script>
 // URL du backend Vercel (fonction serverless api/chat.js). À mettre à jour une fois le backend déployé.
 const BACKEND_URL = 'https://ben-billetterie-backend.vercel.app/api/chat';
@@ -527,9 +561,39 @@ const confirmBtn = document.getElementById('confirmBtn');
 const confirmError = document.getElementById('confirmError');
 const finalSection = document.getElementById('finalSection');
 const finalMessage = document.getElementById('finalMessage');
+const calendlyWrap = document.getElementById('calendlyWrap');
+const calendlyIntro = document.getElementById('calendlyIntro');
+const calendlyInline = document.getElementById('calendlyInline');
+const calendlyConfirmed = document.getElementById('calendlyConfirmed');
 const syntheseEdit = document.getElementById('syntheseEdit');
 let currentEntretienId = null;
 let pendingSyntheseTexte = '';
+
+// Ajoute (ou complète) le paramètre de langue FR sur l'URL Calendly, sans écraser
+// d'éventuels autres paramètres déjà présents dans le lien fourni par le backend.
+function withFrenchLocale(url) {
+  try {
+    const u = new URL(url);
+    if (!u.searchParams.has('locale')) {
+      u.searchParams.set('locale', 'fr');
+    }
+    return u.toString();
+  } catch (e) {
+    return url;
+  }
+}
+
+// Écoute les événements postMessage envoyés par le widget Calendly embarqué.
+// Référence : https://developer.calendly.com/api-docs/ZG9jOjM1ODUyMDc4-embed-postmessage-events
+window.addEventListener('message', (e) => {
+  if (typeof e.data !== 'object' || e.data === null) return;
+  if (typeof e.data.event !== 'string' || e.data.event.indexOf('calendly.') !== 0) return;
+  if (e.data.event === 'calendly.event_scheduled') {
+    calendlyInline.style.display = 'none';
+    calendlyIntro.style.display = 'none';
+    calendlyConfirmed.style.display = 'block';
+  }
+});
 
 function selectSector(vertical, label) {
   visitor.vertical = vertical;
@@ -792,10 +856,19 @@ confirmBtn.addEventListener('click', async () => {
     }
     confirmSection.style.display = 'none';
     finalSection.style.display = 'block';
-    const calendlyLine = result.calendlyUrl
-      ? ' Vous pouvez dès à présent réserver un créneau pour en discuter : <a href="' + result.calendlyUrl + '" target="_blank" rel="noopener">' + result.calendlyUrl + '</a>'
-      : ' Nous reviendrons vers vous prochainement pour en discuter.';
-    finalMessage.innerHTML = 'Merci ! Votre synthèse est validée. Nous allons maintenant identifier les solutions les plus adaptées à votre profil parmi les prestataires référencés sur TicketMatch.' + calendlyLine;
+    finalMessage.textContent = 'Merci ! Votre synthèse est validée. Nous allons maintenant identifier les solutions les plus adaptées à votre profil parmi les prestataires référencés sur TicketMatch.' +
+      (result.calendlyUrl ? '' : ' Nous reviendrons vers vous prochainement pour en discuter.');
+    if (result.calendlyUrl && window.Calendly) {
+      calendlyWrap.style.display = 'block';
+      window.Calendly.initInlineWidget({
+        url: withFrenchLocale(result.calendlyUrl),
+        parentElement: calendlyInline,
+        prefill: {
+          name: [visitor.prenom, visitor.nom].filter(Boolean).join(' '),
+          email: visitor.email
+        }
+      });
+    }
   } catch (err) {
     confirmError.textContent = "Impossible de valider pour le moment. Réessaie dans un instant.";
     confirmBtn.disabled = false;

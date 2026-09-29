@@ -595,6 +595,21 @@ window.addEventListener('message', (e) => {
   }
 });
 
+// Exemples de placeholder (email / nom du site) par secteur — pour ne pas garder
+// "zoo-exemple.fr" affiché quel que soit le secteur choisi par l'exploitant.
+const SITE_PLACEHOLDER_BY_VERTICAL = {
+  zoo: { email: 'camille@zoo-exemple.fr', site: 'Zoo de...' },
+  spectacle_vivant: { email: 'camille@theatre-exemple.fr', site: 'Théâtre de...' },
+  musees_culture: { email: 'camille@musee-exemple.fr', site: 'Musée de...' },
+  festivals_concerts: { email: 'camille@festival-exemple.fr', site: 'Festival de...' },
+  sport: { email: 'camille@club-exemple.fr', site: 'Stade / Club de...' },
+  parcs_attractions: { email: 'camille@parc-exemple.fr', site: "Parc d'attractions de..." },
+  loisirs_indoor: { email: 'camille@loisirs-exemple.fr', site: 'Centre de loisirs de...' },
+  parcs_aquatiques: { email: 'camille@parc-exemple.fr', site: 'Parc aquatique de...' },
+  loisirs_outdoor: { email: 'camille@loisirs-exemple.fr', site: 'Base de loisirs de...' },
+  autre: { email: 'camille@exemple.fr', site: 'Nom de votre site...' }
+};
+
 function selectSector(vertical, label) {
   visitor.vertical = vertical;
   visitor.verticalLabel = label;
@@ -603,6 +618,9 @@ function selectSector(vertical, label) {
   identityForm.style.display = 'flex';
   verticalBadge.textContent = label.toUpperCase();
   verticalBadge.style.display = 'block';
+  const placeholders = SITE_PLACEHOLDER_BY_VERTICAL[vertical] || SITE_PLACEHOLDER_BY_VERTICAL.autre;
+  emailInput.placeholder = placeholders.email;
+  nomSiteInput.placeholder = placeholders.site;
   prenomInput.focus();
 }
 

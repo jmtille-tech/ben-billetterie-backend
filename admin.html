@@ -165,6 +165,36 @@
     margin-top: 0.4rem;
     font-style: italic;
   }
+  .score-op.eliminated { border-color: var(--warn); }
+  .score-op.eliminated .score-op-head span { color: var(--warn); }
+  .eliminated-reasons { margin-top: 0.4rem; }
+  .eliminated-reason {
+    font-size: 0.8rem;
+    color: var(--warn);
+    padding: 0.1rem 0;
+  }
+  .comparator {
+    margin-top: 1.1rem;
+    padding-top: 1rem;
+    border-top: 1px dashed var(--hairline-strong);
+  }
+  .comparator-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  select.operator-select {
+    font-family: 'Source Sans 3', sans-serif;
+    font-size: 0.88rem;
+    padding: 0.5rem 0.65rem;
+    background: var(--paper);
+    border: 1px solid var(--hairline-strong);
+    border-radius: 3px;
+    color: var(--ink);
+    flex: 1;
+    min-width: 220px;
+  }
   textarea.notes {
     width: 100%;
     min-height: 60px;
@@ -456,6 +486,69 @@ function renderScoreResult(container, result, row) {
     none.textContent = 'Aucun opérateur ne passe le filtre prérequis pour cet entretien.';
     container.appendChild(none);
   }
+}
+
+// Affiche le résultat d'une évaluation ad hoc pour un seul opérateur (comparateur
+// manuel), qu'il passe le filtre prérequis ou non — même gabarit visuel que
+// renderScoreResult, avec en plus les raisons d'élimination si le candidat échoue.
+function renderSingleOperatorEval(container, op, row) {
+  container.innerHTML = '';
+  if (!op) return;
+
+  const opCard = document.createElement('div');
+  opCard.className = 'score-op' + (op.eliminated ? ' eliminated' : '');
+
+  const opHead = document.createElement('div');
+  opHead.className = 'score-op-head';
+  opHead.innerHTML = '<strong>' + escapeHtml(op.name) + '</strong><span>' +
+    (op.eliminated ? 'Éliminé (prérequis)' : op.score + ' pts') + '</span>';
+  opCard.appendChild(opHead);
+
+  if (op.eliminated) {
+    const reasons = document.createElement('div');
+    reasons.className = 'eliminated-reasons';
+    (op.reasons || []).forEach(function (r) {
+      const line = document.createElement('div');
+      line.className = 'eliminated-reason';
+      line.textContent = '— ' + r;
+      reasons.appendChild(line);
+    });
+    opCard.appendChild(reasons);
+  } else {
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = 'Détail du score';
+    const list = document.createElement('div');
+    list.className = 'score-detail-list';
+    (op.detail || []).forEach(function (d) {
+      const line = document.createElement('div');
+      line.className = 'score-detail-line' + (d.obtained ? ' ok' : '');
+      line.textContent = d.label + ' — ' + d.points + '/' + d.weight;
+      list.appendChild(line);
+    });
+    if (op.a_comparer_manuellement) {
+      const manual = document.createElement('div');
+      manual.className = 'score-manual';
+      manual.textContent = 'À comparer toi-même : modèle de prix = ' +
+        (op.a_comparer_manuellement.modele_prix || '?') + ', langue solution = ' +
+        (op.a_comparer_manuellement.langues_solution || '?');
+      list.appendChild(manual);
+    }
+    details.appendChild(summary);
+    details.appendChild(list);
+    opCard.appendChild(details);
+
+    const dossierBtn = document.createElement('button');
+    dossierBtn.className = 'secondary';
+    dossierBtn.textContent = 'Dossier de cadrage';
+    dossierBtn.style.marginTop = '0.6rem';
+    dossierBtn.addEventListener('click', function () {
+      openDossier(row, op);
+    });
+    opCard.appendChild(dossierBtn);
+  }
+
+  container.appendChild(opCard);
 }
 
 // --- Dossier de cadrage (page HTML imprimable, générée depuis les données déjà en base) ---
@@ -880,9 +973,86 @@ function buildEntretienCard(row) {
 
     actions.appendChild(dangerActions);
 
+    // --- Comparateur : évaluer un opérateur précis, hors shortlist, pour cet entretien ---
+    const comparator = document.createElement('div');
+    comparator.className = 'comparator';
+
+    const comparatorLabel = document.createElement('div');
+    comparatorLabel.className = 'field-label';
+    comparatorLabel.style.marginTop = '0';
+    comparatorLabel.textContent = 'Comparer un opérateur spécifique (hors shortlist)';
+    comparator.appendChild(comparatorLabel);
+
+    const comparatorRow = document.createElement('div');
+    comparatorRow.className = 'comparator-row';
+    comparatorRow.style.marginTop = '0.5rem';
+
+    const operatorSelect = document.createElement('select');
+    operatorSelect.className = 'operator-select';
+    function fillOperatorSelect() {
+      const current = operatorSelect.value;
+      operatorSelect.innerHTML = '';
+      if (!allSolutions.length) {
+        const opt = document.createElement('option');
+        opt.textContent = 'Chargement des opérateurs...';
+        operatorSelect.appendChild(opt);
+        return;
+      }
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Choisir un opérateur...';
+      operatorSelect.appendChild(placeholder);
+      allSolutions.forEach(function (sol) {
+        const opt = document.createElement('option');
+        opt.value = sol.id;
+        opt.textContent = sol.name + (sol.secteur_principal ? ' (' + sol.secteur_principal + ')' : '');
+        operatorSelect.appendChild(opt);
+      });
+      if (current) operatorSelect.value = current;
+    }
+    fillOperatorSelect();
+    // Si la liste n'était pas encore chargée au moment du rendu de la carte, on
+    // la re-remplit dès qu'elle arrive.
+    if (!allSolutions.length) {
+      const retry = setInterval(function () {
+        if (allSolutions.length) {
+          fillOperatorSelect();
+          clearInterval(retry);
+        }
+      }, 500);
+    }
+
+    const compareBtn = document.createElement('button');
+    compareBtn.className = 'secondary';
+    compareBtn.textContent = 'Comparer';
+    const comparatorResult = document.createElement('div');
+
+    compareBtn.addEventListener('click', async function () {
+      const solutionId = operatorSelect.value;
+      if (!solutionId) {
+        alert('Choisis un opérateur dans la liste.');
+        return;
+      }
+      compareBtn.disabled = true;
+      try {
+        const res = await callAdmin('evaluate_operator', { id: row.id, solution_id: solutionId });
+        renderSingleOperatorEval(comparatorResult, res.result, row);
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        compareBtn.disabled = false;
+      }
+    });
+
+    comparatorRow.appendChild(operatorSelect);
+    comparatorRow.appendChild(compareBtn);
+    comparator.appendChild(comparatorRow);
+    comparator.appendChild(comparatorResult);
+
     bodyEl.appendChild(notes);
     bodyEl.appendChild(actions);
     bodyEl.appendChild(scoreResultEl);
+    bodyEl.appendChild(comparator);
 
     card.appendChild(head);
     card.appendChild(bodyEl);
@@ -948,10 +1118,22 @@ function renderList() {
   });
 }
 
+let allSolutions = [];
+
 async function loadRows() {
   const result = await callAdmin('list');
   rows = result.rows || [];
   renderList();
+}
+
+async function loadSolutions() {
+  try {
+    const result = await callAdmin('list_solutions');
+    allSolutions = result.solutions || [];
+  } catch (err) {
+    // Non bloquant : le comparateur affichera juste une liste vide si ça échoue.
+    allSolutions = [];
+  }
 }
 
 loginBtn.addEventListener('click', async function () {
@@ -964,6 +1146,7 @@ loginBtn.addEventListener('click', async function () {
   loginBtn.disabled = true;
   try {
     await loadRows();
+    loadSolutions();
     loginBox.style.display = 'none';
     mainView.style.display = 'block';
   } catch (err) {

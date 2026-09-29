@@ -217,6 +217,26 @@
     color: var(--moss-dark);
     margin-left: 0.5rem;
   }
+  .qual-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+  .qual-badge {
+    font-size: 0.76rem;
+    font-weight: 600;
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+    border: 1px solid var(--hairline-strong);
+    color: var(--ink-soft);
+    background: var(--paper);
+  }
+  .qual-badge.ok {
+    color: var(--moss-dark);
+    background: #dbe8dd;
+    border-color: var(--moss);
+  }
 </style>
 </head>
 <body>
@@ -253,6 +273,35 @@ const mainView = document.getElementById('mainView');
 const listEl = document.getElementById('list');
 const countLabel = document.getElementById('countLabel');
 const refreshBtn = document.getElementById('refreshBtn');
+
+// --- Qualification du lead (budget / décideur / échéance) --------------------
+// Dérivée des données déjà collectées en entretien, sans nouvelle question posée
+// à l'exploitant. Sert à la fois dans la liste admin et dans le dossier de cadrage
+// transmis à l'opérateur, comme signal de sérieux du lead dès le premier contact.
+
+const DECIDEUR_KEYWORDS = ['directeur', 'directrice', 'responsable', 'gérant', 'gérante', 'président', 'présidente', 'fondateur', 'fondatrice', 'ceo', 'pdg', 'propriétaire', 'manager', 'chef'];
+
+function computeQualification(data) {
+  const identite = (data && data.identite) || {};
+  const budgetCal = (data && data.budget_calendrier) || {};
+  const contexte = (data && data.contexte) || {};
+
+  const budgetVal = (budgetCal.enveloppe_budgetaire || '').toString().trim();
+  const budgetOk = !!budgetVal;
+
+  const fonction = (identite.fonction || '').toString().trim();
+  const fonctionLower = fonction.toLowerCase();
+  const decideurOk = DECIDEUR_KEYWORDS.some(function (kw) { return fonctionLower.indexOf(kw) !== -1; });
+
+  const echeanceVal = (budgetCal.date_mise_en_service_souhaitee || contexte.echeance_contractuelle || '').toString().trim();
+  const echeanceOk = !!echeanceVal;
+
+  return [
+    { ok: budgetOk, label: budgetOk ? 'Budget confirmé' : 'Budget non précisé', detail: budgetVal },
+    { ok: decideurOk, label: decideurOk ? 'Décideur identifié' : (fonction ? 'Contact identifié' : 'Contact non précisé'), detail: fonction },
+    { ok: echeanceOk, label: echeanceOk ? 'Échéance connue' : 'Échéance non précisée', detail: echeanceVal }
+  ];
+}
 
 async function callAdmin(action, extra) {
   const body = Object.assign({ password: password, action: action }, extra || {});
@@ -413,6 +462,9 @@ function buildDossierHTML(row, op) {
     '.context-line{font-size:0.92rem;line-height:1.6;margin:0.3rem 0;}' +
     '.footer{margin-top:2.5rem;padding-top:1.25rem;border-top:1px solid var(--hairline-strong);font-size:0.8rem;color:var(--ink-soft);}' +
     '.print-btn{position:fixed;top:1rem;right:1rem;font-family:\'Source Sans 3\',sans-serif;font-size:0.85rem;font-weight:600;color:#fff;background:var(--moss);border:none;padding:0.55rem 1rem;border-radius:4px;cursor:pointer;}' +
+    '.qual-row{display:flex;gap:0.5rem;flex-wrap:wrap;margin:0 0 1.5rem;}' +
+    '.qual-badge{font-size:0.78rem;font-weight:600;padding:0.3rem 0.7rem;border-radius:999px;border:1px solid var(--hairline-strong);color:var(--ink-soft);background:var(--paper-raised);}' +
+    '.qual-badge.ok{color:var(--moss-dark);background:#dbe8dd;border-color:var(--moss);}' +
     '.annexe{margin-top:2.5rem;padding-top:0.5rem;}' +
     '.annexe-kicker{font-size:0.78rem;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:var(--ochre);margin:0 0 0.3rem;}' +
     '.annexe-note{font-size:0.85rem;color:var(--ink-soft);margin:0 0 1rem;}' +
@@ -424,6 +476,9 @@ function buildDossierHTML(row, op) {
     '<div class="kicker">Dossier de cadrage — TicketMatch</div>' +
     '<h1>' + escapeHtml(nomSite) + '</h1>' +
     '<p class="subhead">Secteur : ' + escapeHtml(secteur) + ' · Préparé pour ' + escapeHtml(op.name) + ' · ' + escapeHtml(today) + '</p>' +
+    '<div class="qual-row">' + computeQualification(data).map(function (q) {
+      return '<span class="qual-badge' + (q.ok ? ' ok' : '') + '">' + escapeHtml(q.label + (q.ok && q.detail ? ' — ' + q.detail : '')) + '</span>';
+    }).join('') + '</div>' +
     '<h2>Chiffres clés</h2><div class="tiles">' + (tiles || '<p class="muted">Volumétrie non renseignée.</p>') + '</div>' +
     '<h2>Objectifs prioritaires</h2>' + objectifsHtml +
     '<h2>Pourquoi ' + escapeHtml(op.name) + '</h2>' + matchesHtml +
@@ -492,6 +547,16 @@ function renderList() {
 
     const bodyEl = document.createElement('div');
     bodyEl.className = 'card-body';
+
+    const qualRow = document.createElement('div');
+    qualRow.className = 'qual-row';
+    computeQualification(row.donnees_structurees).forEach(function (q) {
+      const badge = document.createElement('span');
+      badge.className = 'qual-badge' + (q.ok ? ' ok' : '');
+      badge.textContent = q.label + (q.ok && q.detail ? ' — ' + q.detail : '');
+      qualRow.appendChild(badge);
+    });
+    bodyEl.appendChild(qualRow);
 
     const syntheseLabel = document.createElement('div');
     syntheseLabel.className = 'field-label';

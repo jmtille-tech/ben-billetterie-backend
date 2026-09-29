@@ -342,6 +342,43 @@ module.exports = async function handler(req, res) {
       return;
     }
 
+    if (action === 'archive') {
+      const id = body.id;
+      if (!id) {
+        res.status(400).json({ error: 'id manquant.' });
+        return;
+      }
+      // archived: true pour archiver, false pour désarchiver (remettre en actif).
+      const archived = body.archived !== false;
+      await supabaseRequest(
+        '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(id),
+        {
+          method: 'PATCH',
+          headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ archive: archived })
+        }
+      );
+      res.status(200).json({ ok: true });
+      return;
+    }
+
+    if (action === 'delete') {
+      const id = body.id;
+      if (!id) {
+        res.status(400).json({ error: 'id manquant.' });
+        return;
+      }
+      await supabaseRequest(
+        '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(id),
+        {
+          method: 'DELETE',
+          headers: { Prefer: 'return=minimal' }
+        }
+      );
+      res.status(200).json({ ok: true });
+      return;
+    }
+
     res.status(400).json({ error: 'Action inconnue.' });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Erreur serveur.' });

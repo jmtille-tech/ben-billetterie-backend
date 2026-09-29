@@ -413,7 +413,11 @@ function buildDossierHTML(row, op) {
     '.context-line{font-size:0.92rem;line-height:1.6;margin:0.3rem 0;}' +
     '.footer{margin-top:2.5rem;padding-top:1.25rem;border-top:1px solid var(--hairline-strong);font-size:0.8rem;color:var(--ink-soft);}' +
     '.print-btn{position:fixed;top:1rem;right:1rem;font-family:\'Source Sans 3\',sans-serif;font-size:0.85rem;font-weight:600;color:#fff;background:var(--moss);border:none;padding:0.55rem 1rem;border-radius:4px;cursor:pointer;}' +
-    '@media print{.print-btn{display:none;}body{background:#fff;}}' +
+    '.annexe{margin-top:2.5rem;padding-top:0.5rem;}' +
+    '.annexe-kicker{font-size:0.78rem;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:var(--ochre);margin:0 0 0.3rem;}' +
+    '.annexe-note{font-size:0.85rem;color:var(--ink-soft);margin:0 0 1rem;}' +
+    '.annexe-body{white-space:pre-wrap;font-size:0.9rem;line-height:1.6;background:var(--paper-raised);border:1px solid var(--hairline);border-radius:6px;padding:1.1rem 1.25rem;}' +
+    '@media print{.print-btn{display:none;}body{background:#fff;}.annexe{page-break-before:always;padding-top:1.5rem;}}' +
     '</style></head><body>' +
     '<button class="print-btn" onclick="window.print()">Imprimer / Enregistrer en PDF</button>' +
     '<div class="sheet">' +
@@ -428,6 +432,14 @@ function buildDossierHTML(row, op) {
     '<p class="context-line"><strong>Solution actuelle :</strong> ' + escapeHtml(contexte.solution_actuelle || 'non précisé') + '</p>' +
     '<p class="context-line"><strong>Échéance contractuelle :</strong> ' + escapeHtml(contexte.echeance_contractuelle || 'non précisée') + '</p>' +
     '<div class="footer">Document confidentiel préparé par TicketMatch pour faciliter votre échange avec ' + escapeHtml(nomSite) + '. Merci de ne pas le diffuser au-delà des personnes concernées par ce projet.</div>' +
+    (row.synthese_texte ? (
+      '<div class="annexe">' +
+      '<div class="annexe-kicker">Annexe</div>' +
+      '<h2>Synthèse complète de l\'entretien</h2>' +
+      '<p class="annexe-note">Détail validé par ' + escapeHtml(nomSite) + ', utile aux deux parties pour préparer l\'échange.</p>' +
+      '<div class="annexe-body">' + escapeHtml(row.synthese_texte) + '</div>' +
+      '</div>'
+    ) : '') +
     '</div></body></html>';
 }
 

@@ -268,7 +268,7 @@ async function callAdmin(action, extra) {
   return result;
 }
 
-function renderScoreResult(container, result) {
+function renderScoreResult(container, result, row) {
   container.innerHTML = '';
   if (!result || !result.shortlist) return;
 
@@ -311,6 +311,15 @@ function renderScoreResult(container, result) {
     details.appendChild(list);
     opCard.appendChild(details);
 
+    const dossierBtn = document.createElement('button');
+    dossierBtn.className = 'secondary';
+    dossierBtn.textContent = 'Dossier de cadrage';
+    dossierBtn.style.marginTop = '0.6rem';
+    dossierBtn.addEventListener('click', function () {
+      openDossier(row, op);
+    });
+    opCard.appendChild(dossierBtn);
+
     container.appendChild(opCard);
   });
 
@@ -320,6 +329,118 @@ function renderScoreResult(container, result) {
     none.textContent = 'Aucun opérateur ne passe le filtre prérequis pour cet entretien.';
     container.appendChild(none);
   }
+}
+
+// --- Dossier de cadrage (page HTML imprimable, générée depuis les données déjà en base) ---
+
+function escapeHtml(str) {
+  return String(str === null || str === undefined ? '' : str).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+function buildDossierHTML(row, op) {
+  const data = row.donnees_structurees || {};
+  const identite = data.identite || {};
+  const contexte = data.contexte || {};
+  const volumetrie = data.volumetrie || {};
+  const besoins = data.besoins_confirmes || {};
+  const secteur = identite.vertical || '—';
+  const nomSite = row.nom_site || identite.nom_site || (row.prenom + ' ' + row.nom);
+  const objectifs = Array.isArray(contexte.objectifs_prioritaires) ? contexte.objectifs_prioritaires : [];
+  const matches = (op.detail || []).filter(function (d) { return d.obtained; }).map(function (d) { return d.label; });
+
+  function statTile(label, value) {
+    if (value === null || value === undefined || value === '') return '';
+    return '<div class="tile"><div class="tile-value">' + escapeHtml(value) + '</div><div class="tile-label">' + escapeHtml(label) + '</div></div>';
+  }
+
+  const tiles = [
+    statTile('Billets vendus / an', volumetrie.volume_billets_annuel != null ? Number(volumetrie.volume_billets_annuel).toLocaleString('fr-FR') : null),
+    statTile('Part en ligne', volumetrie.part_en_ligne_pct != null ? volumetrie.part_en_ligne_pct + ' %' : null),
+    statTile('Part sur place', volumetrie.part_sur_place_pct != null ? volumetrie.part_sur_place_pct + ' %' : null),
+    statTile('Panier moyen', volumetrie.panier_moyen != null ? volumetrie.panier_moyen + ' €' : null)
+  ].filter(Boolean).join('');
+
+  const objectifsHtml = objectifs.length
+    ? '<ol class="objectifs">' + objectifs.map(function (o, i) {
+        const width = Math.max(30, 100 - i * 18);
+        return '<li><div class="objectif-label">' + escapeHtml(o) + '</div><div class="objectif-bar-wrap"><div class="objectif-bar" style="width:' + width + '%"></div></div></li>';
+      }).join('') + '</ol>'
+    : '<p class="muted">Aucun objectif prioritaire enregistré.</p>';
+
+  const matchesHtml = matches.length
+    ? '<ul class="matches">' + matches.map(function (m) { return '<li>' + escapeHtml(m) + '</li>'; }).join('') + '</ul>'
+    : '<p class="muted">Points de correspondance non calculés — lance le scoring avant de générer ce dossier.</p>';
+
+  const besoinsLines = [];
+  if (besoins.otas && besoins.otas.confirme) besoinsLines.push('Vente via OTA' + (besoins.otas.part_ca_pct ? ' (' + besoins.otas.part_ca_pct + ' % du CA)' : ''));
+  if (besoins.cashless && besoins.cashless.confirme) besoinsLines.push('Cashless / RFID');
+  if (besoins.fb && besoins.fb.confirme) besoinsLines.push('Restauration F&B' + (besoins.fb.meme_caisse ? ' (même caisse)' : ''));
+  if (besoins.hebergement_touristique && besoins.hebergement_touristique.confirme) besoinsLines.push('Hébergement touristique lié');
+  if (besoins.btob_groupes && besoins.btob_groupes.confirme) besoinsLines.push('Groupes / BtoB' + (besoins.btob_groupes.volume_estime ? ' (~' + besoins.btob_groupes.volume_estime + ')' : ''));
+  const besoinsHtml = besoinsLines.length
+    ? '<ul class="matches">' + besoinsLines.map(function (b) { return '<li>' + escapeHtml(b) + '</li>'; }).join('') + '</ul>'
+    : '<p class="muted">Aucun besoin spécifique confirmé.</p>';
+
+  const today = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+
+  return '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">' +
+    '<title>Dossier de cadrage — ' + escapeHtml(nomSite) + ' × ' + escapeHtml(op.name) + '</title>' +
+    '<link rel="preconnect" href="https://fonts.googleapis.com">' +
+    '<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet">' +
+    '<style>' +
+    ':root{--paper:#EEF0E4;--paper-raised:#F7F8F1;--ink:#1E2B1F;--ink-soft:#4B564C;--moss:#3F6B4A;--moss-dark:#2C4C34;--ochre:#A9782F;--hairline:#CBCEBA;--hairline-strong:#A9AD93;}' +
+    '*{box-sizing:border-box;}' +
+    'body{margin:0;background:var(--paper);color:var(--ink);font-family:\'Source Sans 3\',sans-serif;}' +
+    '.sheet{max-width:720px;margin:0 auto;padding:2.5rem 2rem 3rem;}' +
+    '.kicker{font-size:0.78rem;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:var(--ochre);margin-bottom:0.4rem;}' +
+    'h1{font-family:\'Fraunces\',serif;font-weight:600;font-size:1.6rem;margin:0 0 0.2rem;}' +
+    '.subhead{color:var(--ink-soft);font-size:0.9rem;margin:0 0 1.75rem;}' +
+    'h2{font-family:\'Fraunces\',serif;font-weight:600;font-size:1.05rem;margin:1.9rem 0 0.7rem;border-bottom:1px solid var(--hairline-strong);padding-bottom:0.4rem;}' +
+    '.tiles{display:flex;gap:0.75rem;flex-wrap:wrap;}' +
+    '.tile{background:var(--paper-raised);border:1px solid var(--hairline);border-radius:6px;padding:0.8rem 1rem;min-width:120px;flex:1;}' +
+    '.tile-value{font-family:\'Fraunces\',serif;font-size:1.3rem;font-weight:600;color:var(--moss-dark);}' +
+    '.tile-label{font-size:0.75rem;color:var(--ink-soft);margin-top:0.15rem;}' +
+    '.objectifs{list-style:none;margin:0;padding:0;}' +
+    '.objectifs li{margin-bottom:0.6rem;}' +
+    '.objectif-label{font-size:0.9rem;margin-bottom:0.25rem;}' +
+    '.objectif-bar-wrap{background:var(--hairline);border-radius:3px;height:8px;overflow:hidden;}' +
+    '.objectif-bar{background:var(--moss);height:100%;}' +
+    'ul.matches{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:0.5rem;}' +
+    'ul.matches li{background:var(--paper-raised);border:1px solid var(--hairline-strong);color:var(--moss-dark);font-size:0.85rem;padding:0.35rem 0.7rem;border-radius:999px;}' +
+    '.muted{color:var(--ink-soft);font-size:0.88rem;}' +
+    '.context-line{font-size:0.92rem;line-height:1.6;margin:0.3rem 0;}' +
+    '.footer{margin-top:2.5rem;padding-top:1.25rem;border-top:1px solid var(--hairline-strong);font-size:0.8rem;color:var(--ink-soft);}' +
+    '.print-btn{position:fixed;top:1rem;right:1rem;font-family:\'Source Sans 3\',sans-serif;font-size:0.85rem;font-weight:600;color:#fff;background:var(--moss);border:none;padding:0.55rem 1rem;border-radius:4px;cursor:pointer;}' +
+    '@media print{.print-btn{display:none;}body{background:#fff;}}' +
+    '</style></head><body>' +
+    '<button class="print-btn" onclick="window.print()">Imprimer / Enregistrer en PDF</button>' +
+    '<div class="sheet">' +
+    '<div class="kicker">Dossier de cadrage — TicketMatch</div>' +
+    '<h1>' + escapeHtml(nomSite) + '</h1>' +
+    '<p class="subhead">Secteur : ' + escapeHtml(secteur) + ' · Préparé pour ' + escapeHtml(op.name) + ' · ' + escapeHtml(today) + '</p>' +
+    '<h2>Chiffres clés</h2><div class="tiles">' + (tiles || '<p class="muted">Volumétrie non renseignée.</p>') + '</div>' +
+    '<h2>Objectifs prioritaires</h2>' + objectifsHtml +
+    '<h2>Pourquoi ' + escapeHtml(op.name) + '</h2>' + matchesHtml +
+    '<h2>Besoins confirmés en entretien</h2>' + besoinsHtml +
+    '<h2>Contexte</h2>' +
+    '<p class="context-line"><strong>Solution actuelle :</strong> ' + escapeHtml(contexte.solution_actuelle || 'non précisé') + '</p>' +
+    '<p class="context-line"><strong>Échéance contractuelle :</strong> ' + escapeHtml(contexte.echeance_contractuelle || 'non précisée') + '</p>' +
+    '<div class="footer">Document confidentiel préparé par TicketMatch pour faciliter votre échange avec ' + escapeHtml(nomSite) + '. Merci de ne pas le diffuser au-delà des personnes concernées par ce projet.</div>' +
+    '</div></body></html>';
+}
+
+function openDossier(row, op) {
+  const html = buildDossierHTML(row, op);
+  const win = window.open('', '_blank');
+  if (!win) {
+    alert("Le navigateur a bloqué l'ouverture de la fenêtre. Autorise les pop-ups pour ce site puis réessaie.");
+    return;
+  }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
 }
 
 function formatDate(iso) {
@@ -459,7 +580,7 @@ function renderList() {
       try {
         const res = await callAdmin('score', { id: row.id });
         row.operateurs_scores = res.result;
-        renderScoreResult(scoreResultEl, res.result);
+        renderScoreResult(scoreResultEl, res.result, row);
         scoreBtn.textContent = 'Recalculer le scoring';
       } catch (err) {
         alert(err.message);
@@ -470,7 +591,7 @@ function renderList() {
     actions.appendChild(scoreBtn);
 
     if (row.operateurs_scores) {
-      renderScoreResult(scoreResultEl, row.operateurs_scores);
+      renderScoreResult(scoreResultEl, row.operateurs_scores, row);
     }
 
     bodyEl.appendChild(notes);

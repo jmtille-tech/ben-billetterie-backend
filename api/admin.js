@@ -188,7 +188,7 @@ function computeScore(solution, data) {
   };
 }
 
-async function runScoring(entretienId) {
+async function getEntretien(entretienId) {
   const rows = await supabaseRequest(
     '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(entretienId) + '&select=*',
     { method: 'GET' }
@@ -196,7 +196,43 @@ async function runScoring(entretienId) {
   if (!rows || rows.length === 0) {
     throw new Error('Entretien introuvable.');
   }
-  const entretien = rows[0];
+  return rows[0];
+}
+
+// Évalue un opérateur précis (choisi manuellement, hors shortlist) pour un entretien
+// donné — même logique prérequis + scoring que runScoring, mais sur un seul candidat.
+// Sert au comparateur ad hoc dans l'admin ("est-ce que cet opérateur pourrait convenir ?").
+async function evaluateSolutionForEntretien(entretienId, solutionId) {
+  const entretien = await getEntretien(entretienId);
+  const data = entretien.donnees_structurees;
+  if (!data) {
+    throw new Error("Cet entretien n'a pas de données structurées enregistrées.");
+  }
+  const solRows = await supabaseRequest(
+    '/rest/v1/solutions?id=eq.' + encodeURIComponent(solutionId) + '&select=*',
+    { method: 'GET' }
+  );
+  if (!solRows || solRows.length === 0) {
+    throw new Error('Opérateur introuvable.');
+  }
+  const solution = solRows[0];
+  const prereq = passesPrerequis(solution, data);
+  if (!prereq.pass) {
+    return { name: solution.name, id: solution.id, eliminated: true, reasons: prereq.reasons };
+  }
+  const scored = computeScore(solution, data);
+  return {
+    name: solution.name,
+    id: solution.id,
+    eliminated: false,
+    score: scored.score,
+    detail: scored.detail,
+    a_comparer_manuellement: scored.a_comparer_manuellement
+  };
+}
+
+async function runScoring(entretienId) {
+  const entretien = await getEntretien(entretienId);
   const data = entretien.donnees_structurees;
   if (!data) {
     throw new Error("Cet entretien n'a pas de données structurées enregistrées.");
@@ -339,6 +375,27 @@ module.exports = async function handler(req, res) {
       }
       const result = await runScoring(id);
       res.status(200).json({ result: result });
+      return;
+    }
+
+    if (action === 'list_solutions') {
+      const solutions = await supabaseRequest(
+        '/rest/v1/solutions?select=id,name,secteur_principal&order=name.asc',
+        { method: 'GET' }
+      );
+      res.status(200).json({ solutions: solutions });
+      return;
+    }
+
+    if (action === 'evaluate_operator') {
+      const id = body.id;
+      const solutionId = body.solution_id;
+      if (!id || !solutionId) {
+        res.status(400).json({ error: 'id (entretien) et solution_id requis.' });
+        return;
+      }
+      const evaluation = await evaluateSolutionForEntretien(id, solutionId);
+      res.status(200).json({ result: evaluation });
       return;
     }
 

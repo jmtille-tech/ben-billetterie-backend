@@ -237,6 +237,50 @@
     background: #dbe8dd;
     border-color: var(--moss);
   }
+  .view-tabs {
+    display: flex;
+    gap: 0.4rem;
+  }
+  .view-tab {
+    background: transparent;
+    color: var(--ink-soft);
+    border: 1px solid transparent;
+    font-weight: 600;
+    font-size: 0.85rem;
+    padding: 0.45rem 0.85rem;
+  }
+  .view-tab:hover { background: rgba(63,107,74,0.08); }
+  .view-tab.active {
+    color: var(--moss-dark);
+    background: var(--paper-raised);
+    border-color: var(--hairline-strong);
+  }
+  .group-heading {
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+    font-size: 1.15rem;
+    color: var(--moss-dark);
+    margin: 1.6rem 0 0.6rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--hairline-strong);
+  }
+  .group-heading:first-child { margin-top: 0; }
+  .group-subheading {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin: 0.9rem 0 0.5rem;
+  }
+  .card.archived { opacity: 0.85; }
+  .row-actions-danger { margin-left: auto; display: flex; gap: 0.6rem; }
+  button.danger {
+    background: transparent;
+    color: var(--warn);
+    border: 1px solid var(--warn);
+  }
+  button.danger:hover { background: rgba(138,59,37,0.08); }
 </style>
 </head>
 <body>
@@ -252,7 +296,13 @@
 
   <div id="mainView" style="display:none;">
     <div class="toolbar">
-      <div class="card-meta" id="countLabel"></div>
+      <div style="display:flex; align-items:center; gap:1rem;">
+        <div class="view-tabs">
+          <button class="view-tab active" id="tabActifs">Actifs</button>
+          <button class="view-tab" id="tabArchives">Archivés</button>
+        </div>
+        <div class="card-meta" id="countLabel"></div>
+      </div>
       <div style="display:flex; gap:0.6rem;">
         <button class="secondary" id="callSheetBtn">Fiche d'appel</button>
         <button class="secondary" id="refreshBtn">Rafraîchir</button>
@@ -277,6 +327,30 @@ const listEl = document.getElementById('list');
 const countLabel = document.getElementById('countLabel');
 const refreshBtn = document.getElementById('refreshBtn');
 const callSheetBtn = document.getElementById('callSheetBtn');
+const tabActifs = document.getElementById('tabActifs');
+const tabArchives = document.getElementById('tabArchives');
+
+let currentView = 'actifs';
+
+// Libellés d'affichage des verticales — doit rester synchronisé avec l'objet
+// VERTICALS de api/chat.js (clé = valeur stockée dans la colonne top-level
+// `vertical` de ben_entretiens).
+const VERTICAL_LABELS = {
+  zoo: 'Zoos & parcs animaliers',
+  spectacle_vivant: 'Spectacle vivant',
+  musees_culture: 'Musées & culture',
+  festivals_concerts: 'Festivals & Concerts',
+  sport: 'Sport',
+  parcs_attractions: "Parcs d'attractions",
+  loisirs_indoor: 'Activités de loisirs indoors',
+  parcs_aquatiques: 'Parcs aquatiques',
+  loisirs_outdoor: 'Activités de loisirs outdoors',
+  autre: 'Autre / non précisé'
+};
+
+function verticalLabel(v) {
+  return VERTICAL_LABELS[v] || v || 'Non précisé';
+}
 
 // --- Qualification du lead (budget / décideur / échéance) --------------------
 // Dérivée des données déjà collectées en entretien, sans nouvelle question posée
@@ -617,16 +691,9 @@ function formatDate(iso) {
   }
 }
 
-function renderList() {
-  listEl.innerHTML = '';
-  countLabel.textContent = rows.length + ' entretien' + (rows.length > 1 ? 's' : '');
-  if (rows.length === 0) {
-    listEl.innerHTML = '<div class="empty">Aucun entretien pour le moment.</div>';
-    return;
-  }
-  rows.forEach(function (row) {
+function buildEntretienCard(row) {
     const card = document.createElement('div');
-    card.className = 'card';
+    card.className = 'card' + (row.archive ? ' archived' : '');
 
     const statutLabel = row.statut === 'valide' ? 'validé par l\'exploitant' : 'en attente de validation';
 
@@ -770,13 +837,114 @@ function renderList() {
       renderScoreResult(scoreResultEl, row.operateurs_scores, row);
     }
 
+    const dangerActions = document.createElement('div');
+    dangerActions.className = 'row-actions-danger';
+
+    const archiveBtn = document.createElement('button');
+    archiveBtn.className = 'secondary';
+    archiveBtn.textContent = row.archive ? 'Désarchiver' : 'Archiver';
+    archiveBtn.addEventListener('click', async function () {
+      archiveBtn.disabled = true;
+      try {
+        await callAdmin('archive', { id: row.id, archived: !row.archive });
+        row.archive = !row.archive;
+        renderList();
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        archiveBtn.disabled = false;
+      }
+    });
+    dangerActions.appendChild(archiveBtn);
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'danger';
+    deleteBtn.textContent = 'Supprimer';
+    deleteBtn.addEventListener('click', async function () {
+      const label = row.nom_site || (row.prenom + ' ' + row.nom);
+      if (!confirm('Supprimer définitivement l\'entretien "' + label + '" ? Cette action est irréversible.')) {
+        return;
+      }
+      deleteBtn.disabled = true;
+      try {
+        await callAdmin('delete', { id: row.id });
+        rows = rows.filter(function (r) { return r.id !== row.id; });
+        renderList();
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        deleteBtn.disabled = false;
+      }
+    });
+    dangerActions.appendChild(deleteBtn);
+
+    actions.appendChild(dangerActions);
+
     bodyEl.appendChild(notes);
     bodyEl.appendChild(actions);
     bodyEl.appendChild(scoreResultEl);
 
     card.appendChild(head);
     card.appendChild(bodyEl);
-    listEl.appendChild(card);
+    return card;
+}
+
+function renderList() {
+  listEl.innerHTML = '';
+  tabActifs.classList.toggle('active', currentView === 'actifs');
+  tabArchives.classList.toggle('active', currentView === 'archives');
+
+  const actifs = rows.filter(function (r) { return !r.archive; });
+  const archives = rows.filter(function (r) { return r.archive; });
+
+  if (currentView === 'actifs') {
+    countLabel.textContent = actifs.length + ' entretien' + (actifs.length > 1 ? 's' : '') + ' actif' + (actifs.length > 1 ? 's' : '');
+    if (actifs.length === 0) {
+      listEl.innerHTML = '<div class="empty">Aucun entretien actif pour le moment.</div>';
+      return;
+    }
+    actifs.forEach(function (row) {
+      listEl.appendChild(buildEntretienCard(row));
+    });
+    return;
+  }
+
+  // Vue "Archivés" — groupée par Année puis par Vertical.
+  countLabel.textContent = archives.length + ' entretien' + (archives.length > 1 ? 's' : '') + ' archivé' + (archives.length > 1 ? 's' : '');
+  if (archives.length === 0) {
+    listEl.innerHTML = '<div class="empty">Aucun entretien archivé.</div>';
+    return;
+  }
+
+  const byYear = {};
+  archives.forEach(function (row) {
+    const year = row.created_at ? new Date(row.created_at).getFullYear() : 'Année inconnue';
+    if (!byYear[year]) byYear[year] = {};
+    const vKey = row.vertical || 'autre';
+    if (!byYear[year][vKey]) byYear[year][vKey] = [];
+    byYear[year][vKey].push(row);
+  });
+
+  const years = Object.keys(byYear).sort(function (a, b) { return b - a; });
+  years.forEach(function (year) {
+    const yearHeading = document.createElement('div');
+    yearHeading.className = 'group-heading';
+    yearHeading.textContent = year;
+    listEl.appendChild(yearHeading);
+
+    const verticals = Object.keys(byYear[year]).sort(function (a, b) {
+      return verticalLabel(a).localeCompare(verticalLabel(b), 'fr');
+    });
+    verticals.forEach(function (vKey) {
+      const vHeading = document.createElement('div');
+      vHeading.className = 'group-subheading';
+      vHeading.textContent = verticalLabel(vKey) + ' (' + byYear[year][vKey].length + ')';
+      listEl.appendChild(vHeading);
+
+      byYear[year][vKey].forEach(function (row) {
+        listEl.appendChild(buildEntretienCard(row));
+      });
+    });
   });
 }
 
@@ -811,6 +979,15 @@ passwordInput.addEventListener('keydown', function (e) {
 
 refreshBtn.addEventListener('click', function () {
   loadRows().catch(function (err) { alert(err.message); });
+});
+
+tabActifs.addEventListener('click', function () {
+  currentView = 'actifs';
+  renderList();
+});
+tabArchives.addEventListener('click', function () {
+  currentView = 'archives';
+  renderList();
 });
 
 callSheetBtn.addEventListener('click', openCallSheet);

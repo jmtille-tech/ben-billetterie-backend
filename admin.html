@@ -253,7 +253,10 @@
   <div id="mainView" style="display:none;">
     <div class="toolbar">
       <div class="card-meta" id="countLabel"></div>
-      <button class="secondary" id="refreshBtn">Rafraîchir</button>
+      <div style="display:flex; gap:0.6rem;">
+        <button class="secondary" id="callSheetBtn">Fiche d'appel</button>
+        <button class="secondary" id="refreshBtn">Rafraîchir</button>
+      </div>
     </div>
     <div id="list"></div>
   </div>
@@ -273,6 +276,7 @@ const mainView = document.getElementById('mainView');
 const listEl = document.getElementById('list');
 const countLabel = document.getElementById('countLabel');
 const refreshBtn = document.getElementById('refreshBtn');
+const callSheetBtn = document.getElementById('callSheetBtn');
 
 // --- Qualification du lead (budget / décideur / échéance) --------------------
 // Dérivée des données déjà collectées en entretien, sans nouvelle question posée
@@ -498,6 +502,101 @@ function buildDossierHTML(row, op) {
     '</div></body></html>';
 }
 
+// --- Fiche d'appel (déroulé type, générique, à garder sous les yeux pendant l'appel) ---
+
+function buildCallSheetHTML() {
+  const steps = [
+    {
+      title: 'Ouverture',
+      time: '2 min',
+      items: [
+        'Présenter les parties (exploitant, opérateur, toi)',
+        'Rappeler le contexte du projet',
+        'Renvoyer au dossier de cadrage déjà transmis'
+      ]
+    },
+    {
+      title: "Présentation de l'opérateur",
+      time: '10-15 min',
+      items: [
+        "L'opérateur présente sa solution",
+        'En lien avec les besoins identifiés dans le dossier de cadrage'
+      ]
+    },
+    {
+      title: "Questions de l'exploitant",
+      time: '10 min',
+      items: [
+        'Temps dédié aux questions/clarifications',
+        'Vérifier que budget, échéance et besoins confirmés sont bien adressés'
+      ]
+    },
+    {
+      title: 'Prochaines étapes',
+      time: '3 min',
+      items: [
+        'Récapituler ce qui suit (devis, second call, démo approfondie...)',
+        "Rappeler que l'appel est enregistré et sera partagé aux deux parties"
+      ]
+    }
+  ];
+
+  const stepsHtml = steps.map(function (s, i) {
+    const itemsHtml = s.items.map(function (it) {
+      return '<li><span class="tick">☐</span> ' + escapeHtml(it) + '</li>';
+    }).join('');
+    return '<div class="step">' +
+      '<div class="step-head"><span class="step-num">' + (i + 1) + '</span><span class="step-title">' + escapeHtml(s.title) + '</span><span class="step-time">' + escapeHtml(s.time) + '</span></div>' +
+      '<ul class="step-items">' + itemsHtml + '</ul>' +
+      '</div>';
+  }).join('');
+
+  return '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">' +
+    '<title>Fiche d\'appel — TicketMatch</title>' +
+    '<link rel="preconnect" href="https://fonts.googleapis.com">' +
+    '<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet">' +
+    '<style>' +
+    ':root{--paper:#EEF0E4;--paper-raised:#F7F8F1;--ink:#1E2B1F;--ink-soft:#4B564C;--moss:#3F6B4A;--moss-dark:#2C4C34;--ochre:#A9782F;--hairline:#CBCEBA;--hairline-strong:#A9AD93;}' +
+    '*{box-sizing:border-box;}' +
+    'body{margin:0;background:var(--paper);color:var(--ink);font-family:\'Source Sans 3\',sans-serif;}' +
+    '.sheet{max-width:640px;margin:0 auto;padding:2.5rem 2rem 3rem;}' +
+    '.kicker{font-size:0.78rem;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:var(--ochre);margin-bottom:0.4rem;}' +
+    'h1{font-family:\'Fraunces\',serif;font-weight:600;font-size:1.6rem;margin:0 0 0.2rem;}' +
+    '.subhead{color:var(--ink-soft);font-size:0.9rem;margin:0 0 2rem;}' +
+    '.step{background:var(--paper-raised);border:1px solid var(--hairline);border-radius:8px;padding:1.1rem 1.3rem;margin-bottom:1rem;}' +
+    '.step-head{display:flex;align-items:baseline;gap:0.6rem;margin-bottom:0.6rem;}' +
+    '.step-num{font-family:\'Fraunces\',serif;font-weight:600;color:#fff;background:var(--moss);width:1.6rem;height:1.6rem;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:0.85rem;flex-shrink:0;}' +
+    '.step-title{font-family:\'Fraunces\',serif;font-weight:600;font-size:1.05rem;flex:1;}' +
+    '.step-time{font-size:0.8rem;color:var(--ochre);font-weight:600;white-space:nowrap;}' +
+    '.step-items{list-style:none;margin:0;padding:0;}' +
+    '.step-items li{font-size:0.92rem;line-height:1.7;color:var(--ink);}' +
+    '.tick{color:var(--moss-dark);margin-right:0.3rem;}' +
+    '.footer{margin-top:1.75rem;font-size:0.8rem;color:var(--ink-soft);}' +
+    '.print-btn{position:fixed;top:1rem;right:1rem;font-family:\'Source Sans 3\',sans-serif;font-size:0.85rem;font-weight:600;color:#fff;background:var(--moss);border:none;padding:0.55rem 1rem;border-radius:4px;cursor:pointer;}' +
+    '@media print{.print-btn{display:none;}body{background:#fff;}}' +
+    '</style></head><body>' +
+    '<button class="print-btn" onclick="window.print()">Imprimer</button>' +
+    '<div class="sheet">' +
+    '<div class="kicker">Fiche d\'appel — TicketMatch</div>' +
+    '<h1>Déroulé type — Exploitant × Opérateur</h1>' +
+    '<p class="subhead">À garder sous les yeux pendant l\'appel — trame, pas un script à lire mot pour mot.</p>' +
+    stepsHtml +
+    '<div class="footer">Rappel : l\'appel est enregistré automatiquement (Fireflies) et le récap part à tous les participants de l\'invite.</div>' +
+    '</div></body></html>';
+}
+
+function openCallSheet() {
+  const html = buildCallSheetHTML();
+  const win = window.open('', '_blank');
+  if (!win) {
+    alert("Le navigateur a bloqué l'ouverture de la fenêtre. Autorise les pop-ups pour ce site puis réessaie.");
+    return;
+  }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+}
+
 function openDossier(row, op) {
   const html = buildDossierHTML(row, op);
   const win = window.open('', '_blank');
@@ -713,6 +812,8 @@ passwordInput.addEventListener('keydown', function (e) {
 refreshBtn.addEventListener('click', function () {
   loadRows().catch(function (err) { alert(err.message); });
 });
+
+callSheetBtn.addEventListener('click', openCallSheet);
 </script>
 </body>
 </html>

@@ -1114,6 +1114,9 @@ function autoGrow() {
 userInput.addEventListener('input', autoGrow);
 
 function sendMessage() {
+  // Un seul message à la fois : tant que l'agent n'a pas répondu, Entrée ne renvoie rien
+  // (évite deux requêtes simultanées, donc deux brouillons).
+  if (sendBtn.disabled) return;
   const text = userInput.value.trim();
   if (!text) return;
   renderTurn('user', text);

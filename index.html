@@ -204,6 +204,24 @@
     cursor: pointer;
   }
   button.start:hover { background: var(--moss-dark); }
+  .resume-banner {
+    border: 1px solid var(--moss);
+    border-radius: 6px;
+    padding: 1rem 1.1rem;
+    margin-bottom: 1.4rem;
+    background: rgba(63,107,74,0.06);
+  }
+  .resume-banner p { margin: 0 0 0.8rem; }
+  .resume-actions { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; }
+  button.resume-restart {
+    background: none;
+    border: none;
+    color: var(--moss-dark);
+    text-decoration: underline;
+    cursor: pointer;
+    font: inherit;
+    padding: 0.4rem 0;
+  }
   button.start:disabled { opacity: 0.6; cursor: default; }
   .typing {
     padding: 1rem 0;
@@ -330,6 +348,13 @@
 
   <div class="transcript" id="transcript">
     <div class="empty-state" id="emptyState">
+      <div class="resume-banner" id="resumeBanner" style="display:none;">
+        <p id="resumeBannerText"></p>
+        <div class="resume-actions">
+          <button type="button" class="start" id="resumeBtn">Reprendre mon entretien</button>
+          <button type="button" class="resume-restart" id="restartBtn">Recommencer</button>
+        </div>
+      </div>
       <p id="introText">Cet entretien nous permet d'identifier les solutions de billetterie les plus adaptées à votre situation, parmi les prestataires référencés sur TicketMatch. Comptez 20 à 30 minutes, selon la richesse de vos réponses. Commencez par indiquer votre secteur d'activité.</p>
 
       <div class="sector-grid" id="sectorGrid">
@@ -374,6 +399,10 @@
           <input type="email" id="emailInput" class="field identity-input" placeholder="camille@zoo-exemple.fr">
         </div>
         <div class="identity-row">
+          <label for="telephoneInput">Téléphone <span style="font-weight:normal;opacity:0.7;">(facultatif)</span></label>
+          <input type="tel" id="telephoneInput" class="field identity-input" placeholder="06 12 34 56 78" autocomplete="tel">
+        </div>
+        <div class="identity-row">
           <label for="nomSiteInput">Nom du site</label>
           <input type="text" id="nomSiteInput" class="field identity-input" placeholder="Zoo de...">
         </div>
@@ -398,6 +427,7 @@
   <div class="composer-hint" id="hint" style="display:none;">Entrée pour envoyer, Maj+Entrée pour un saut de ligne.</div>
 
   <div id="confirmSection" style="display:none;">
+    <p class="subhead" id="repriseWelcome" style="margin-bottom:0.6rem;display:none;"></p>
     <p class="subhead" style="margin-bottom:0.6rem;">Voici le récapitulatif de votre entretien. Vous pouvez encore le corriger ci-dessous avant de valider.</p>
     <textarea class="synthese-edit" id="syntheseEdit"></textarea>
     <div style="margin-top:0.9rem;">
@@ -528,7 +558,7 @@ function buildSystemPrompt(visitor) {
 */
 
 let messages = [];
-let visitor = { prenom: '', nom: '', fonction: '', email: '', nomSite: '', vertical: '', verticalLabel: '' };
+let visitor = { prenom: '', nom: '', fonction: '', email: '', telephone: '', nomSite: '', vertical: '', verticalLabel: '' };
 const transcriptEl = document.getElementById('transcript');
 const emptyStateEl = document.getElementById('emptyState');
 const introText = document.getElementById('introText');
@@ -548,6 +578,12 @@ const nomInput = document.getElementById('nomInput');
 const fonctionInput = document.getElementById('fonctionInput');
 const emailInput = document.getElementById('emailInput');
 const nomSiteInput = document.getElementById('nomSiteInput');
+const telephoneInput = document.getElementById('telephoneInput');
+const resumeBanner = document.getElementById('resumeBanner');
+const resumeBannerText = document.getElementById('resumeBannerText');
+const resumeBtn = document.getElementById('resumeBtn');
+const restartBtn = document.getElementById('restartBtn');
+const repriseWelcome = document.getElementById('repriseWelcome');
 const identityError = document.getElementById('identityError');
 const consentCheckbox = document.getElementById('consentCheckbox');
 const composerEl = document.getElementById('composer');
@@ -753,6 +789,10 @@ async function callAgent(userText, typingText, options) {
     }
     const rawReply = result.rawReply || '(pas de réponse texte)';
     messages.push({ role: 'assistant', content: rawReply });
+    // Sauvegarde locale de l'entretien en cours (pas pendant la fabrication de la synthèse).
+    if (!options.expectSynthesisProse && !options.expectStructuredData && !result.triggersSynthesis) {
+      saveProgress();
+    }
 
     const triggersSynthesis = result.triggersSynthesis;
     const displayText = result.displayText;
@@ -791,6 +831,9 @@ async function callAgent(userText, typingText, options) {
     } else if (options.expectStructuredData) {
       if (result.entretienId) {
         currentEntretienId = result.entretienId;
+        // L'entretien est enregistré côté serveur : le navigateur ne garde plus que
+        // son identifiant, pour pouvoir rouvrir directement la synthèse.
+        saveProgress({ entretienId: result.entretienId });
         syntheseEdit.value = pendingSyntheseTexte;
         confirmSection.style.display = 'block';
       } else {
@@ -847,7 +890,7 @@ startBtn.addEventListener('click', () => {
     return;
   }
   identityError.textContent = '';
-  visitor = { prenom: prenom, nom: nom, fonction: fonction, email: email, nomSite: nomSiteInput.value.trim(), vertical: visitor.vertical, verticalLabel: visitor.verticalLabel };
+  visitor = { prenom: prenom, nom: nom, fonction: fonction, email: email, telephone: telephoneInput.value.trim(), nomSite: nomSiteInput.value.trim(), vertical: visitor.vertical, verticalLabel: visitor.verticalLabel };
   emptyStateEl.remove();
   composerEl.style.display = 'flex';
   hintEl.style.display = 'block';
@@ -872,21 +915,12 @@ confirmBtn.addEventListener('click', async () => {
     if (!response.ok || result.error) {
       throw new Error(result.error || 'Erreur (' + response.status + ')');
     }
+    clearProgress();
     confirmSection.style.display = 'none';
     finalSection.style.display = 'block';
-    finalMessage.textContent = 'Merci ! Votre synthèse est validée. Nous allons maintenant identifier les solutions les plus adaptées à votre profil parmi les prestataires référencés sur TicketMatch.' +
+    finalMessage.textContent = (result.alreadyValidated ? 'Votre synthèse était déjà validée, merci !' : 'Merci ! Votre synthèse est validée.') + ' Nous allons maintenant identifier les solutions les plus adaptées à votre profil parmi les prestataires référencés sur TicketMatch.' +
       (result.calendlyUrl ? '' : ' Nous reviendrons vers vous prochainement pour en discuter.');
-    if (result.calendlyUrl && window.Calendly) {
-      calendlyWrap.style.display = 'block';
-      window.Calendly.initInlineWidget({
-        url: withFrenchLocale(result.calendlyUrl),
-        parentElement: calendlyInline,
-        prefill: {
-          name: [visitor.prenom, visitor.nom].filter(Boolean).join(' '),
-          email: visitor.email
-        }
-      });
-    }
+    showCalendly(result.calendlyUrl);
   } catch (err) {
     confirmError.textContent = "Impossible de valider pour le moment. Réessaie dans un instant.";
     confirmBtn.disabled = false;
@@ -894,6 +928,157 @@ confirmBtn.addEventListener('click', async () => {
     console.error(err);
   }
 });
+
+function showCalendly(url) {
+  if (!url || !window.Calendly) return;
+  calendlyWrap.style.display = 'block';
+  window.Calendly.initInlineWidget({
+    url: withFrenchLocale(url),
+    parentElement: calendlyInline,
+    prefill: {
+      name: [visitor.prenom, visitor.nom].filter(Boolean).join(' '),
+      email: visitor.email
+    }
+  });
+}
+
+// --- Reprise : entretien interrompu ou synthèse non validée -------------------
+// 1) Pendant l'entretien, la conversation est gardée dans ce navigateur
+//    (localStorage) : si l'onglet est fermé, l'exploitant peut reprendre là où il
+//    s'était arrêté en revenant sur la page, depuis le même navigateur.
+// 2) Une fois la synthèse enregistrée côté serveur, seul son identifiant est gardé.
+//    La synthèse se rouvre alors depuis ce navigateur, ou depuis n'importe quel
+//    appareil via le lien personnel ?reprise=<id> envoyé par l'email de relance.
+const PROGRESS_KEY = 'ticketmatch_entretien_v1';
+const PROGRESS_MAX_AGE_MS = 14 * 24 * 3600 * 1000;
+const START_INSTRUCTION = "Commence l'entretien.";
+
+function saveProgress(extra) {
+  try {
+    const state = (extra && extra.entretienId)
+      ? { entretienId: extra.entretienId, prenom: visitor.prenom, savedAt: Date.now() }
+      : { visitor: visitor, messages: messages, savedAt: Date.now() };
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify(state));
+  } catch (e) { /* stockage indisponible (navigation privée...) : on continue sans */ }
+}
+
+function clearProgress() {
+  try { localStorage.removeItem(PROGRESS_KEY); } catch (e) { /* rien */ }
+}
+
+function loadProgress() {
+  try {
+    const raw = localStorage.getItem(PROGRESS_KEY);
+    if (!raw) return null;
+    const state = JSON.parse(raw);
+    if (!state || !state.savedAt || Date.now() - state.savedAt > PROGRESS_MAX_AGE_MS) {
+      clearProgress();
+      return null;
+    }
+    return state;
+  } catch (e) {
+    return null;
+  }
+}
+
+function resumeInterview(state) {
+  visitor = Object.assign({}, visitor, state.visitor || {});
+  messages = Array.isArray(state.messages) ? state.messages : [];
+  emptyStateEl.remove();
+  if (visitor.verticalLabel) {
+    verticalBadge.textContent = String(visitor.verticalLabel).toUpperCase();
+    verticalBadge.style.display = 'block';
+  }
+  messages.forEach(function (m, i) {
+    if (i === 0 && m.role === 'user' && m.content === START_INSTRUCTION) return;
+    const text = String(m.content || '').replace(SYNTHESIS_MARKER, '').trim();
+    if (text) renderTurn(m.role, text);
+  });
+  composerEl.style.display = 'flex';
+  hintEl.style.display = 'block';
+  // Si la dernière question de l'agent n'avait pas encore de réponse, on la laisse
+  // affichée ; si un message de l'exploitant était resté sans réponse, on relance l'agent.
+  if (messages.length && messages[messages.length - 1].role === 'user') {
+    callAgent(null);
+  } else {
+    userInput.focus();
+  }
+}
+
+async function openSynthese(entretienId) {
+  emptyStateEl.style.display = 'none';
+  setTyping(true, 'Je retrouve votre synthèse');
+  try {
+    const response = await fetch(BACKEND_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'getSynthese', entretienId: entretienId })
+    });
+    const data = await response.json().catch(function () { return {}; });
+    if (!response.ok || data.error) {
+      const err = new Error(data.error || ('Erreur (' + response.status + ')'));
+      err.status = response.status;
+      throw err;
+    }
+    setTyping(false);
+    visitor.prenom = data.prenom;
+    visitor.nom = data.nom;
+    visitor.email = data.email;
+    visitor.nomSite = data.nomSite;
+    currentEntretienId = data.entretienId;
+    emptyStateEl.remove();
+    if (data.statut === 'valide') {
+      clearProgress();
+      finalSection.style.display = 'block';
+      finalMessage.textContent = 'Bonjour ' + data.prenom + ', votre synthèse est déjà validée, merci ! ' +
+        'Nous identifions les solutions les plus adaptées à votre profil parmi les prestataires référencés sur TicketMatch.' +
+        (data.calendlyUrl ? '' : ' Nous reviendrons vers vous prochainement pour en discuter.');
+      showCalendly(data.calendlyUrl);
+      return;
+    }
+    saveProgress({ entretienId: data.entretienId });
+    repriseWelcome.textContent = 'Bonjour ' + data.prenom + ', vous retrouvez votre synthèse telle que vous l\'avez laissée.';
+    repriseWelcome.style.display = 'block';
+    syntheseEdit.value = data.syntheseTexte;
+    confirmSection.style.display = 'block';
+  } catch (err) {
+    setTyping(false);
+    if (err.status === 404 || err.status === 400) clearProgress();
+    emptyStateEl.style.display = '';
+    resumeBanner.style.display = 'none';
+    showError("Nous n'avons pas pu retrouver votre synthèse. Vous pouvez démarrer un nouvel entretien ci-dessous, ou répondre à l'email que vous avez reçu.");
+    console.error(err);
+  }
+}
+
+function initReprise() {
+  const params = new URLSearchParams(window.location.search);
+  const reprise = params.get('reprise');
+  if (reprise) {
+    openSynthese(reprise);
+    return;
+  }
+  const state = loadProgress();
+  if (!state) return;
+  let onResume = null;
+  if (state.entretienId) {
+    resumeBannerText.textContent = 'Bonjour ' + (state.prenom || '') + ', votre synthèse est prête : il ne vous reste qu\'à la relire et la valider.';
+    resumeBtn.textContent = 'Retrouver ma synthèse';
+    onResume = function () { openSynthese(state.entretienId); };
+  } else if (state.visitor && Array.isArray(state.messages) && state.messages.length > 1) {
+    const date = new Date(state.savedAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
+    resumeBannerText.textContent = 'Bonjour ' + (state.visitor.prenom || '') + ', vous avez un entretien en cours (dernier échange le ' + date + '). Reprenez là où vous vous étiez arrêté.';
+    onResume = function () { resumeInterview(state); };
+  } else {
+    return;
+  }
+  resumeBtn.addEventListener('click', onResume);
+  restartBtn.addEventListener('click', function () {
+    clearProgress();
+    resumeBanner.style.display = 'none';
+  });
+  resumeBanner.style.display = 'block';
+}
 
 function autoGrow() {
   userInput.style.height = 'auto';
@@ -916,6 +1101,8 @@ userInput.addEventListener('keydown', (e) => {
     sendMessage();
   }
 });
+
+initReprise();
 </script>
 </body>
 </html>

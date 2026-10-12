@@ -399,6 +399,29 @@ module.exports = async function handler(req, res) {
       return;
     }
 
+    // Validation manuelle par l'équipe, quand l'exploitant a donné son accord par
+    // téléphone ou par email plutôt qu'avec le bouton de la page. Calcule aussi la
+    // shortlist. N'envoie aucun email à l'exploitant (le contact est déjà humain).
+    if (action === 'validate') {
+      const id = body.id;
+      if (!id) {
+        res.status(400).json({ error: 'id manquant.' });
+        return;
+      }
+      const valideAt = new Date().toISOString();
+      await supabaseRequest(
+        '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(id),
+        {
+          method: 'PATCH',
+          headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ statut: 'valide', valide_at: valideAt })
+        }
+      );
+      const result = await runScoring(id);
+      res.status(200).json({ ok: true, valide_at: valideAt, result: result });
+      return;
+    }
+
     if (action === 'archive') {
       const id = body.id;
       if (!id) {

@@ -49,3 +49,22 @@ vercel --prod
 ## Prochaine étape
 
 Une fois ce backend déployé et son URL connue, il faut mettre à jour `BEN_Billetterie_Agent_Test.html` : remplacer la constante `BACKEND_URL` en haut du script par l'URL réelle (`https://ton-projet.vercel.app/api/chat`).
+
+## Reprise de la synthèse et relance automatique (octobre 2026)
+
+**Reprise.** Un exploitant qui n'a pas validé sa synthèse peut la rouvrir avec son lien personnel `https://agent-ticketmatch.vercel.app/?reprise=<id>` (envoyé par l'email de relance, ou copié depuis l'espace interne avec le bouton « Copier le lien de reprise »). Il retrouve sa synthèse modifiable et le bouton « Valider ma synthèse », sans rien ressaisir. Pendant l'entretien, la conversation est aussi gardée dans son navigateur : s'il ferme l'onglet, il peut reprendre là où il s'était arrêté en revenant sur la page depuis le même navigateur.
+
+**Relance automatique** (`api/relances.js`). Toutes les heures, les entretiens « en attente » terminés depuis plus de 2 h (et moins de 72 h) reçoivent un email unique avec le lien de reprise. L'équipe reçoit en parallèle un email interne avec le téléphone, pour un rappel de vive voix 24 h plus tard si rien ne bouge.
+
+Mise en service (une seule fois) :
+
+1. **Supabase** → SQL Editor : exécuter `supabase/2026-10-12_relance.sql` (ajoute la colonne `relance_envoyee_at`).
+2. **Vercel** → Settings → Environment Variables :
+   - `RELANCE_CRON_SECRET` = une longue chaîne aléatoire (obligatoire) ;
+   - `RELANCE_REPLY_TO` = l'adresse qui doit recevoir les réponses des exploitants (facultatif ; sans elle, l'email ne propose pas de répondre).
+3. **GitHub** → Settings → Secrets and variables → Actions : créer le secret `RELANCE_CRON_SECRET` avec la même valeur.
+4. Tester sans rien envoyer : onglet Actions, ou
+   `curl -X POST -H "Authorization: Bearer <secret>" "https://ben-billetterie-backend.vercel.app/api/relances?dry=1"`
+   liste les entretiens qui seraient relancés.
+
+**Espace interne.** Nouveaux boutons sur un entretien en attente : « Copier le lien de reprise » et « Marquer comme validé » (validation obtenue par téléphone ou par email : calcule la shortlist, n'envoie rien à l'exploitant). Le téléphone (facultatif, saisi au démarrage) s'affiche à côté de l'email.

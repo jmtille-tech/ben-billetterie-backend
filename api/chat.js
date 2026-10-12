@@ -172,9 +172,7 @@ function buildSystemPrompt(visitor) {
   const vertical = getVertical(verticalKey);
   // Pour "autre", il n'y a pas de libellé fixe : on utilise le texte libre saisi
   // par l'exploitant (visitor.verticalLabel), en le signalant comme non standardisé.
-  const secteurDeclare = vertical.label
-    ? vertical.label
-    : ((visitor.verticalLabel && String(visitor.verticalLabel).trim()) || 'activité non précisée') + ' (catégorie non standardisée, saisie libre)';
+  const secteurDeclare = secteurDeclareFor(visitor);
   const today = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
   let identityBlock = '\n\nNous sommes le ' + today + '. Si une date ou une période doit être évoquée (échéance, saison, calendrier), fonde-toi sur cette date réelle et non sur une estimation.';
   identityBlock += '\n\nInterlocuteur de cet entretien : ' + visitor.prenom;
@@ -214,7 +212,81 @@ async function callAnthropic(system, messages) {
   return textBlock ? textBlock.text : '';
 }
 
-async function saveEntretien(visitor, structuredData, syntheseTexte) {
+// --- Brouillon d'entretien (statut "en_cours") ------------------------------
+// Dès la première réponse de l'exploitant, l'entretien est enregistré côté serveur
+// avec le statut "en_cours" et la conversation complète (colonne "conversation").
+// Ainsi, un entretien interrompu (onglet fermé, rendez-vous...) apparaît dans
+// l'admin, peut être relancé par email et repris depuis n'importe quel appareil
+// via le lien ?reprise=<id>. Toute erreur ici est ignorée : le brouillon ne doit
+// jamais empêcher l'entretien de se dérouler.
+// Prérequis Supabase : supabase/2026-10-12_brouillon.sql (colonnes conversation
+// et derniere_activite_at).
+
+function secteurDeclareFor(visitor) {
+  const verticalKey = (visitor && visitor.vertical && VERTICALS[visitor.vertical]) ? visitor.vertical : DEFAULT_VERTICAL_KEY;
+  const vertical = getVertical(verticalKey);
+  return vertical.label
+    ? vertical.label
+    : ((visitor && visitor.verticalLabel && String(visitor.verticalLabel).trim()) || 'activité non précisée') + ' (catégorie non standardisée, saisie libre)';
+}
+
+function conversationPayload(visitor, messages) {
+  return {
+    visitor: {
+      prenom: visitor.prenom || '',
+      nom: visitor.nom || '',
+      fonction: visitor.fonction || '',
+      email: visitor.email || '',
+      telephone: visitor.telephone || '',
+      nomSite: visitor.nomSite || '',
+      vertical: visitor.vertical || '',
+      verticalLabel: visitor.verticalLabel || ''
+    },
+    messages: messages
+  };
+}
+
+async function saveDraft(visitor, messages, draftId) {
+  const now = new Date().toISOString();
+  const conversation = conversationPayload(visitor, messages);
+  try {
+    if (draftId) {
+      // Mise à jour du brouillon, uniquement s'il est toujours "en_cours"
+      // (jamais d'écrasement d'un entretien déjà terminé).
+      await supabaseServiceRequest(
+        '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(draftId) + '&statut=eq.en_cours',
+        {
+          method: 'PATCH',
+          headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ conversation: conversation, derniere_activite_at: now })
+        }
+      );
+      return { ok: true, id: draftId };
+    }
+    const rows = await supabaseServiceRequest('/rest/v1/ben_entretiens', {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({
+        vertical: secteurDeclareFor(visitor),
+        prenom: visitor.prenom,
+        nom: visitor.nom,
+        fonction: visitor.fonction,
+        email: visitor.email || null,
+        nom_site: visitor.nomSite || null,
+        synthese_texte: '',
+        statut: 'en_cours',
+        conversation: conversation,
+        derniere_activite_at: now
+      })
+    });
+    const id = rows && rows[0] ? rows[0].id : null;
+    return id ? { ok: true, id: id } : { ok: false, error: 'Brouillon non créé.' };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+async function saveEntretien(visitor, structuredData, syntheseTexte, draftId) {
   const SUPABASE_URL = process.env.SUPABASE_URL;
   const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
   if (!SUPABASE_URL || !SUPABASE_KEY) {
@@ -237,7 +309,29 @@ async function saveEntretien(visitor, structuredData, syntheseTexte) {
     donnees_structurees: structuredData,
     statut: 'en_attente'
   };
-  try {
+  const now = new Date().toISOString();
+
+  // 1) Un brouillon existe : on le transforme en entretien terminé ("en_attente").
+  if (draftId) {
+    try {
+      const rows = await supabaseServiceRequest(
+        '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(draftId) + '&statut=eq.en_cours',
+        {
+          method: 'PATCH',
+          headers: { Prefer: 'return=representation' },
+          body: JSON.stringify(Object.assign({}, payload, { derniere_activite_at: now }))
+        }
+      );
+      if (rows && rows[0]) {
+        return { ok: true, id: rows[0].id };
+      }
+    } catch (err) {
+      // On retombe sur l'insertion classique ci-dessous.
+    }
+  }
+
+  // 2) Pas de brouillon (ou brouillon introuvable) : insertion classique.
+  const insertOnce = async function (body) {
     const response = await fetch(SUPABASE_URL + '/rest/v1/ben_entretiens', {
       method: 'POST',
       headers: {
@@ -246,7 +340,7 @@ async function saveEntretien(visitor, structuredData, syntheseTexte) {
         'Content-Type': 'application/json',
         Prefer: 'return=representation'
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(body)
     });
     if (!response.ok) {
       const errText = await response.text();
@@ -255,6 +349,14 @@ async function saveEntretien(visitor, structuredData, syntheseTexte) {
     const rows = await response.json();
     const id = rows && rows[0] ? rows[0].id : null;
     return { ok: true, id: id };
+  };
+  try {
+    const first = await insertOnce(Object.assign({}, payload, { derniere_activite_at: now }));
+    // Filet de sécurité si la colonne derniere_activite_at n'existe pas encore.
+    if (!first.ok && /derniere_activite_at/.test(first.error || '')) {
+      return await insertOnce(payload);
+    }
+    return first;
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -540,8 +642,7 @@ module.exports = async function handler(req, res) {
       }
       try {
         const rows = await supabaseServiceRequest(
-          '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(entretienId) +
-          '&select=id,prenom,nom,email,nom_site,vertical,synthese_texte,statut,archive',
+          '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(entretienId) + '&select=*',
           { method: 'GET' }
         );
         const row = rows && rows[0];
@@ -558,6 +659,8 @@ module.exports = async function handler(req, res) {
           vertical: row.vertical || '',
           syntheseTexte: row.synthese_texte || '',
           statut: row.statut,
+          // Entretien interrompu : on renvoie la conversation pour la reprendre.
+          conversation: row.statut === 'en_cours' ? (row.conversation || null) : null,
           calendlyUrl: row.statut === 'valide' ? (process.env.CALENDLY_URL || null) : null
         });
       } catch (err) {
@@ -642,6 +745,14 @@ module.exports = async function handler(req, res) {
     const system = buildSystemPrompt(visitor);
     const rawReply = await callAnthropic(system, messages);
 
+    let draftId = UUID_PATTERN.test(String(body.draftId || '')) ? String(body.draftId) : null;
+    // Brouillon : dès la première réponse de l'exploitant (messages = consigne de
+    // démarrage, accueil de l'agent, première réponse), hors phase de synthèse.
+    if (!options.expectSynthesisProse && !options.expectStructuredData && messages.length >= 3) {
+      const draft = await saveDraft(visitor, messages.concat([{ role: 'assistant', content: rawReply }]), draftId);
+      if (draft.ok) draftId = draft.id;
+    }
+
     const triggersSynthesis = rawReply.includes(SYNTHESIS_MARKER);
     let displayText = rawReply.replace(SYNTHESIS_MARKER, '').trim();
 
@@ -665,7 +776,7 @@ module.exports = async function handler(req, res) {
           parseError = "Le JSON reçu n'a pas pu être analysé.";
         }
         if (structuredData) {
-          const saveResult = await saveEntretien(visitor, structuredData, options.syntheseTexte || '');
+          const saveResult = await saveEntretien(visitor, structuredData, options.syntheseTexte || '', draftId);
           saved = saveResult.ok;
           saveError = saveResult.ok ? null : saveResult.error;
           entretienId = saveResult.ok ? saveResult.id : null;
@@ -682,7 +793,8 @@ module.exports = async function handler(req, res) {
       rawStructuredText: parseError ? rawStructuredText : null,
       saved: saved,
       saveError: saveError,
-      entretienId: entretienId
+      entretienId: entretienId,
+      draftId: draftId
     });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Erreur serveur.' });

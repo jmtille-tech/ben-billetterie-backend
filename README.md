@@ -68,3 +68,13 @@ Mise en service (une seule fois) :
    liste les entretiens qui seraient relancés.
 
 **Espace interne.** Nouveaux boutons sur un entretien en attente : « Copier le lien de reprise » et « Marquer comme validé » (validation obtenue par téléphone ou par email : calcule la shortlist, n'envoie rien à l'exploitant). Le téléphone (facultatif, saisi au démarrage) s'affiche à côté de l'email.
+
+### Entretiens interrompus (brouillons)
+
+Dès la première réponse de l'exploitant, l'entretien est enregistré dans Supabase avec le statut `en_cours` et la conversation complète (colonne `conversation`). Conséquences :
+
+- l'admin affiche les entretiens interrompus (« entretien interrompu », avec la conversation et le téléphone) ;
+- la relance automatique les concerne aussi : email « Reprenez votre entretien TicketMatch » 2 h après la dernière activité ;
+- le lien `?reprise=<id>` rouvre la conversation là où elle s'était arrêtée, depuis n'importe quel appareil. Si l'exploitant était parti pendant la rédaction de la synthèse, celle-ci est relancée automatiquement.
+
+Prérequis : exécuter `supabase/2026-10-12_brouillon.sql` (colonnes `conversation` et `derniere_activite_at`). Sans cette étape, l'agent fonctionne normalement mais sans brouillon.

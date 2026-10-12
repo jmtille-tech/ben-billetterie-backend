@@ -3,16 +3,17 @@
 //
 // Appelée toutes les heures par un déclencheur planifié (voir
 // .github/workflows/relances.yml). Pour chaque entretien :
-//   - encore "en_attente", non archivé, jamais relancé,
-//   - terminé depuis plus de RELANCE_DELAI_HEURES (2 h par défaut)
+//   - "en_attente" (synthèse non validée) ou "en_cours" (entretien interrompu
+//     avant la synthèse), non archivé, jamais relancé,
+//   - sans activité depuis plus de RELANCE_DELAI_HEURES (2 h par défaut)
 //     et depuis moins de RELANCE_FENETRE_HEURES (72 h par défaut),
 // elle envoie UN email à l'exploitant avec son lien de reprise personnel, prévient
 // l'équipe en interne (pour un rappel humain 24 h plus tard si rien ne bouge), puis
 // note la date d'envoi dans la colonne relance_envoyee_at. Un entretien n'est donc
 // jamais relancé deux fois automatiquement.
 //
-// Prérequis Supabase (une seule fois) :
-//   alter table ben_entretiens add column if not exists relance_envoyee_at timestamptz;
+// Prérequis Supabase (une seule fois) : supabase/2026-10-12_relance.sql et
+// supabase/2026-10-12_brouillon.sql.
 //
 // Variables d'environnement Vercel :
 //   RELANCE_CRON_SECRET     (obligatoire) secret partagé avec le déclencheur planifié
@@ -90,6 +91,21 @@ function repriseUrl(entretienId) {
   return u.toString();
 }
 
+function buildInterrompuEmail(row, link, canReply) {
+  const prenom = escapeHtml(row.prenom || '');
+  const site = row.nom_site ? ' pour ' + escapeHtml(row.nom_site) : '';
+  return '<p>Bonjour ' + prenom + ',</p>' +
+    '<p>Vous avez commencé votre entretien avec l\'agent TicketMatch' + site + ', mais il s\'est interrompu ' +
+    'avant la fin. Vos réponses sont conservées : vous pouvez reprendre exactement là où vous vous étiez arrêté, ' +
+    'depuis n\'importe quel ordinateur ou téléphone.</p>' +
+    '<p><a href="' + link + '" style="display:inline-block;padding:10px 18px;background:#3f6b4a;color:#ffffff;' +
+    'text-decoration:none;border-radius:4px;">Reprendre mon entretien</a></p>' +
+    (canReply ? '<p>Une question ou un point qui vous fait hésiter ? Répondez simplement à cet email.</p>' : '') +
+    '<p>Pour rappel : la mise en relation est gratuite et sans engagement, et vos informations ' +
+    'ne sont transmises à aucun opérateur sans votre accord.</p>' +
+    '<p>Belle journée,<br>L\'équipe TicketMatch</p>';
+}
+
 function buildExploitantEmail(row, link, canReply) {
   const prenom = escapeHtml(row.prenom || '');
   const site = row.nom_site ? ' pour ' + escapeHtml(row.nom_site) : '';
@@ -107,21 +123,29 @@ function buildExploitantEmail(row, link, canReply) {
     '<p>Belle journée,<br>L\'équipe TicketMatch</p>';
 }
 
-function buildAdminEmail(row, link) {
+function telephoneOf(row) {
   const ident = (row.donnees_structurees && row.donnees_structurees.identite) || {};
-  const tel = ident.telephone ? escapeHtml(ident.telephone) : 'non renseigné';
+  const conv = (row.conversation && row.conversation.visitor) || {};
+  return ident.telephone || conv.telephone || '';
+}
+
+function buildAdminEmail(row, link) {
+  const tel = telephoneOf(row) ? escapeHtml(telephoneOf(row)) : 'non renseigné';
+  const situation = row.statut === 'en_cours'
+    ? 'entretien interrompu avant la synthèse'
+    : 'synthèse non validée';
   const nomSite = escapeHtml(row.nom_site || ((row.prenom || '') + ' ' + (row.nom || '')));
   const rappel = new Date(Date.now() + 24 * 3600 * 1000).toLocaleString('fr-FR', {
     weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris'
   });
   return '<p>Relance automatique envoyée à <strong>' + escapeHtml(row.prenom || '') + ' ' + escapeHtml(row.nom || '') +
-    '</strong> (' + nomSite + ') : synthèse non validée.</p>' +
+    '</strong> (' + nomSite + ') : ' + situation + '.</p>' +
     '<ul>' +
     '<li>Fonction : ' + escapeHtml(row.fonction || '') + '</li>' +
     '<li>Email : ' + escapeHtml(row.email || '') + '</li>' +
     '<li>Téléphone : ' + tel + '</li>' +
     '</ul>' +
-    '<p>Si la synthèse n\'est toujours pas validée <strong>' + rappel + '</strong>, un rappel de vive voix est prévu.</p>' +
+    '<p>Si rien n\'a bougé <strong>' + rappel + '</strong>, un rappel de vive voix est prévu.</p>' +
     '<p><a href="' + ADMIN_URL + '">Ouvrir l\'espace interne</a> · <a href="' + link + '">Lien de reprise de l\'exploitant</a></p>';
 }
 
@@ -144,18 +168,23 @@ module.exports = async function handler(req, res) {
   const delaiH = Number(process.env.RELANCE_DELAI_HEURES || 2);
   const fenetreH = Number(process.env.RELANCE_FENETRE_HEURES || 72);
   const now = Date.now();
-  const avant = new Date(now - delaiH * 3600 * 1000).toISOString();
-  const apres = new Date(now - fenetreH * 3600 * 1000).toISOString();
+  const avant = now - delaiH * 3600 * 1000;
+  const apres = now - fenetreH * 3600 * 1000;
+  // Large présélection côté base (30 jours), filtrage fin sur la dernière activité ici.
+  const depuis = new Date(now - 30 * 24 * 3600 * 1000).toISOString();
 
   try {
-    const rows = await supabaseServiceRequest(
-      '/rest/v1/ben_entretiens?select=id,prenom,nom,fonction,email,nom_site,donnees_structurees,created_at' +
-      '&statut=eq.en_attente&relance_envoyee_at=is.null&archive=not.is.true&email=not.is.null' +
-      '&created_at=lt.' + encodeURIComponent(avant) +
-      '&created_at=gt.' + encodeURIComponent(apres) +
+    const candidates = await supabaseServiceRequest(
+      '/rest/v1/ben_entretiens?select=*' +
+      '&statut=in.(en_attente,en_cours)&relance_envoyee_at=is.null&archive=not.is.true&email=not.is.null' +
+      '&created_at=gt.' + encodeURIComponent(depuis) +
       '&order=created_at.asc',
       { method: 'GET' }
     );
+    const rows = (candidates || []).filter(function (r) {
+      const last = Date.parse(r.derniere_activite_at || r.created_at);
+      return last < avant && last > apres;
+    });
 
     const replyTo = process.env.RELANCE_REPLY_TO || null;
     const adminEmail = process.env.ADMIN_NOTIFY_EMAIL || 'jmtille@neuroplayxperiences.com';
@@ -164,13 +193,14 @@ module.exports = async function handler(req, res) {
     for (const row of rows || []) {
       const link = repriseUrl(row.id);
       if (dryRun) {
-        results.push({ id: row.id, email: row.email, nom_site: row.nom_site, created_at: row.created_at, dryRun: true });
+        results.push({ id: row.id, statut: row.statut, email: row.email, nom_site: row.nom_site, derniere_activite_at: row.derniere_activite_at || row.created_at, dryRun: true });
         continue;
       }
+      const interrompu = row.statut === 'en_cours';
       const exploitant = await sendEmail(
         row.email,
-        'Votre synthèse TicketMatch vous attend',
-        buildExploitantEmail(row, link, Boolean(replyTo)),
+        interrompu ? 'Reprenez votre entretien TicketMatch' : 'Votre synthèse TicketMatch vous attend',
+        interrompu ? buildInterrompuEmail(row, link, Boolean(replyTo)) : buildExploitantEmail(row, link, Boolean(replyTo)),
         replyTo
       );
       if (!exploitant.ok) {
@@ -191,7 +221,7 @@ module.exports = async function handler(req, res) {
         'Agent TicketMatch — relance envoyée : ' + (row.nom_site || ((row.prenom || '') + ' ' + (row.nom || ''))),
         buildAdminEmail(row, link)
       );
-      results.push({ id: row.id, sent: true, adminNotified: admin.ok });
+      results.push({ id: row.id, statut: row.statut, sent: true, adminNotified: admin.ok });
     }
 
     res.status(200).json({ ok: true, checked: (rows || []).length, dryRun: dryRun, results: results });

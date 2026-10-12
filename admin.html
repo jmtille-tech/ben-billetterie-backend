@@ -101,6 +101,10 @@
   .badge.en_attente { background: #f0e6cf; color: var(--ochre); }
   .badge.valide { background: #dbe8dd; color: var(--moss-dark); }
   .badge.abandonne { background: #f0dede; color: var(--warn); }
+  .badge.en_cours { background: #e3e6ef; color: #3a4a6b; }
+  .conversation { margin-top: 0.6rem; max-height: 420px; overflow-y: auto; font-size: 0.85rem; }
+  .conversation .conv-turn { margin: 0 0 0.6rem; white-space: pre-wrap; }
+  .conversation .conv-who { font-weight: 600; }
   .card-body { margin-top: 1rem; display: none; }
   .card.open .card-body { display: block; }
   .card.open .chevron { transform: rotate(90deg); }
@@ -788,7 +792,11 @@ function buildEntretienCard(row) {
     const card = document.createElement('div');
     card.className = 'card' + (row.archive ? ' archived' : '');
 
-    const statutLabel = row.statut === 'valide' ? 'validé par l\'exploitant' : 'en attente de validation';
+    const statutLabel = row.statut === 'valide' ? 'validé par l\'exploitant'
+      : (row.statut === 'en_cours' ? 'entretien interrompu' : 'en attente de validation');
+    const convVisitor = (row.conversation && row.conversation.visitor) || {};
+    const telephone = (row.donnees_structurees && row.donnees_structurees.identite && row.donnees_structurees.identite.telephone)
+      || convVisitor.telephone || '';
 
     const head = document.createElement('div');
     head.className = 'card-head';
@@ -798,8 +806,7 @@ function buildEntretienCard(row) {
       '</div>' +
       '<div class="card-meta">' +
       (row.prenom + ' ' + row.nom + (row.email ? ' (' + row.email + ')' : '') +
-        (row.donnees_structurees && row.donnees_structurees.identite && row.donnees_structurees.identite.telephone
-          ? ' · tél. ' + escapeHtml(row.donnees_structurees.identite.telephone) : '') +
+        (telephone ? ' · tél. ' + escapeHtml(telephone) : '') +
         ' — ' + (row.fonction || '') + ' · ' + formatDate(row.created_at)) +
       ' <span class="badge ' + row.statut + '">' + statutLabel + '</span>' +
       '</div>';
@@ -841,6 +848,36 @@ function buildEntretienCard(row) {
     rawDetails.appendChild(summary);
     rawDetails.appendChild(jsonEdit);
     bodyEl.appendChild(rawDetails);
+
+    // Conversation enregistrée pendant l'entretien (brouillon), utile surtout
+    // pour un entretien interrompu avant la synthèse.
+    const convMessages = (row.conversation && Array.isArray(row.conversation.messages)) ? row.conversation.messages : [];
+    if (convMessages.length) {
+      const convDetails = document.createElement('details');
+      convDetails.className = 'raw-json';
+      if (row.statut === 'en_cours') convDetails.open = true;
+      const convSummary = document.createElement('summary');
+      const nbReponses = convMessages.filter(function (m, i) { return m.role === 'user' && i > 0; }).length;
+      convSummary.textContent = 'Conversation (' + nbReponses + ' réponse' + (nbReponses > 1 ? 's' : '') + ' de l\'exploitant)';
+      const convBox = document.createElement('div');
+      convBox.className = 'conversation';
+      convMessages.forEach(function (m, i) {
+        if (i === 0 && m.role === 'user') return;
+        const text = String(m.content || '').replace('[[GENERATE_SYNTHESIS]]', '').trim();
+        if (!text) return;
+        const p = document.createElement('p');
+        p.className = 'conv-turn';
+        const who = document.createElement('span');
+        who.className = 'conv-who';
+        who.textContent = (m.role === 'assistant' ? 'Agent' : (row.prenom || 'Exploitant')) + ' : ';
+        p.appendChild(who);
+        p.appendChild(document.createTextNode(text));
+        convBox.appendChild(p);
+      });
+      convDetails.appendChild(convSummary);
+      convDetails.appendChild(convBox);
+      bodyEl.appendChild(convDetails);
+    }
 
     const saveEditsBtn = document.createElement('button');
     saveEditsBtn.className = 'secondary';
@@ -905,7 +942,10 @@ function buildEntretienCard(row) {
     } else {
       const pendingNote = document.createElement('span');
       pendingNote.className = 'card-meta';
-      if (row.relance_envoyee_at) {
+      const derniere = row.derniere_activite_at || row.created_at;
+      if (row.statut === 'en_cours' && !row.relance_envoyee_at) {
+        pendingNote.textContent = 'Entretien interrompu avant la synthèse — dernière activité le ' + formatDate(derniere) + '.';
+      } else if (row.relance_envoyee_at) {
         const rappel = new Date(new Date(row.relance_envoyee_at).getTime() + 24 * 3600 * 1000);
         pendingNote.textContent = 'En attente — relance envoyée le ' + formatDate(row.relance_envoyee_at) +
           (rappel < new Date() ? ' · à rappeler de vive voix' : ' · rappel prévu le ' + formatDate(rappel.toISOString()));
@@ -928,7 +968,9 @@ function buildEntretienCard(row) {
         }
       });
       actions.appendChild(repriseBtn);
+    }
 
+    if (row.statut === 'en_attente') {
       // Validation manuelle, quand l'exploitant a donné son accord de vive voix ou par email.
       const validateBtn = document.createElement('button');
       validateBtn.className = 'secondary';
@@ -968,7 +1010,7 @@ function buildEntretienCard(row) {
         scoreBtn.disabled = false;
       }
     });
-    actions.appendChild(scoreBtn);
+    if (row.statut !== 'en_cours') actions.appendChild(scoreBtn);
 
     if (row.operateurs_scores) {
       renderScoreResult(scoreResultEl, row.operateurs_scores, row);

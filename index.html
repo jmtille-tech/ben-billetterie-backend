@@ -603,6 +603,9 @@ const calendlyInline = document.getElementById('calendlyInline');
 const calendlyConfirmed = document.getElementById('calendlyConfirmed');
 const syntheseEdit = document.getElementById('syntheseEdit');
 let currentEntretienId = null;
+// Identifiant du brouillon côté serveur (entretien "en_cours"), renvoyé par le
+// backend dès la première réponse de l'exploitant.
+let draftId = null;
 let pendingSyntheseTexte = '';
 
 // Ajoute (ou complète) le paramètre de langue FR sur l'URL Calendly, sans écraser
@@ -760,6 +763,20 @@ const STRUCTURED_DATA_MARKER = '[[STRUCTURED_DATA]]';
 // L'appel à Anthropic et l'écriture dans Supabase se font entièrement côté serveur
 // (api/chat.js). Rien de technique n'est affiché à l'exploitant dans cette version.
 
+// Lance la rédaction de la synthèse (fin d'entretien, ou reprise d'un entretien
+// interrompu pendant cette étape).
+function startSynthesis() {
+  composerEl.style.display = 'none';
+  hintEl.style.display = 'none';
+  setTimeout(() => {
+    callAgent(
+      "Peux-tu maintenant produire uniquement la synthèse lisible destinée à l'exploitant (premier appel), sans marqueur ni JSON.",
+      "Merci pour cet échange, je prépare le récapitulatif",
+      { expectSynthesisProse: true }
+    );
+  }, 500);
+}
+
 async function callAgent(userText, typingText, options) {
   options = options || {};
   clearError();
@@ -776,6 +793,7 @@ async function callAgent(userText, typingText, options) {
       body: JSON.stringify({
         visitor: visitor,
         messages: messages,
+        draftId: draftId,
         options: options
       })
     });
@@ -789,8 +807,9 @@ async function callAgent(userText, typingText, options) {
     }
     const rawReply = result.rawReply || '(pas de réponse texte)';
     messages.push({ role: 'assistant', content: rawReply });
+    if (result.draftId) draftId = result.draftId;
     // Sauvegarde locale de l'entretien en cours (pas pendant la fabrication de la synthèse).
-    if (!options.expectSynthesisProse && !options.expectStructuredData && !result.triggersSynthesis) {
+    if (!options.expectSynthesisProse && !options.expectStructuredData) {
       saveProgress();
     }
 
@@ -809,15 +828,7 @@ async function callAgent(userText, typingText, options) {
     }
 
     if (triggersSynthesis) {
-      composerEl.style.display = 'none';
-      hintEl.style.display = 'none';
-      setTimeout(() => {
-        callAgent(
-          "Peux-tu maintenant produire uniquement la synthèse lisible destinée à l'exploitant (premier appel), sans marqueur ni JSON.",
-          "Merci pour cet échange, je prépare le récapitulatif",
-          { expectSynthesisProse: true }
-        );
-      }, 500);
+      startSynthesis();
     } else if (options.expectSynthesisProse) {
       const syntheseTexte = displayText;
       pendingSyntheseTexte = syntheseTexte;
@@ -957,7 +968,7 @@ function saveProgress(extra) {
   try {
     const state = (extra && extra.entretienId)
       ? { entretienId: extra.entretienId, prenom: visitor.prenom, savedAt: Date.now() }
-      : { visitor: visitor, messages: messages, savedAt: Date.now() };
+      : { visitor: visitor, messages: messages, draftId: draftId, savedAt: Date.now() };
     localStorage.setItem(PROGRESS_KEY, JSON.stringify(state));
   } catch (e) { /* stockage indisponible (navigation privée...) : on continue sans */ }
 }
@@ -984,6 +995,7 @@ function loadProgress() {
 function resumeInterview(state) {
   visitor = Object.assign({}, visitor, state.visitor || {});
   messages = Array.isArray(state.messages) ? state.messages : [];
+  draftId = state.draftId || null;
   emptyStateEl.remove();
   if (visitor.verticalLabel) {
     verticalBadge.textContent = String(visitor.verticalLabel).toUpperCase();
@@ -994,6 +1006,14 @@ function resumeInterview(state) {
     const text = String(m.content || '').replace(SYNTHESIS_MARKER, '').trim();
     if (text) renderTurn(m.role, text);
   });
+  const last = messages.length ? messages[messages.length - 1] : null;
+  // L'entretien était terminé mais la synthèse n'avait pas encore été rédigée :
+  // on la relance directement, sans redemander quoi que ce soit.
+  if (last && last.role === 'assistant' && String(last.content || '').indexOf(SYNTHESIS_MARKER) !== -1) {
+    saveProgress();
+    startSynthesis();
+    return;
+  }
   composerEl.style.display = 'flex';
   hintEl.style.display = 'block';
   // Si la dernière question de l'agent n'avait pas encore de réponse, on la laisse
@@ -1007,7 +1027,7 @@ function resumeInterview(state) {
 
 async function openSynthese(entretienId) {
   emptyStateEl.style.display = 'none';
-  setTyping(true, 'Je retrouve votre synthèse');
+  setTyping(true, 'Je retrouve votre dossier');
   try {
     const response = await fetch(BACKEND_URL, {
       method: 'POST',
@@ -1021,6 +1041,13 @@ async function openSynthese(entretienId) {
       throw err;
     }
     setTyping(false);
+    if (data.statut === 'en_cours') {
+      if (data.conversation && Array.isArray(data.conversation.messages) && data.conversation.messages.length) {
+        resumeInterview({ visitor: data.conversation.visitor || {}, messages: data.conversation.messages, draftId: data.entretienId });
+        return;
+      }
+      throw Object.assign(new Error('Conversation introuvable.'), { status: 404 });
+    }
     visitor.prenom = data.prenom;
     visitor.nom = data.nom;
     visitor.email = data.email;

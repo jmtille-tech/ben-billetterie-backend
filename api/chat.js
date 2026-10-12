@@ -246,6 +246,28 @@ function conversationPayload(visitor, messages) {
   };
 }
 
+async function findMatchingDraft(visitor, messages) {
+  const accueil = messages[1] && messages[1].role === 'assistant' ? String(messages[1].content || '') : '';
+  if (!visitor.email || !accueil) return null;
+  try {
+    const depuis = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const rows = await supabaseServiceRequest(
+      '/rest/v1/ben_entretiens?select=id,conversation&statut=eq.en_cours' +
+      '&email=eq.' + encodeURIComponent(visitor.email) +
+      '&created_at=gt.' + encodeURIComponent(depuis) +
+      '&order=created_at.desc&limit=10',
+      { method: 'GET' }
+    );
+    const match = (rows || []).find(function (r) {
+      const m = r.conversation && Array.isArray(r.conversation.messages) ? r.conversation.messages : [];
+      return m[1] && m[1].role === 'assistant' && String(m[1].content || '') === accueil;
+    });
+    return match ? match.id : null;
+  } catch (err) {
+    return null;
+  }
+}
+
 async function saveDraft(visitor, messages, draftId) {
   const now = new Date().toISOString();
   const conversation = conversationPayload(visitor, messages);
@@ -262,6 +284,22 @@ async function saveDraft(visitor, messages, draftId) {
         }
       );
       return { ok: true, id: draftId };
+    }
+    // Garde-fou anti-doublon : si la page n'a pas transmis d'identifiant (ancienne
+    // version de la page restée ouverte, double envoi...), on cherche un brouillon
+    // récent du même exploitant qui correspond à la même conversation (même message
+    // d'accueil de l'agent) et on le complète au lieu d'en créer un nouveau.
+    const existingId = await findMatchingDraft(visitor, messages);
+    if (existingId) {
+      await supabaseServiceRequest(
+        '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(existingId) + '&statut=eq.en_cours',
+        {
+          method: 'PATCH',
+          headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ conversation: conversation, derniere_activite_at: now })
+        }
+      );
+      return { ok: true, id: existingId };
     }
     const rows = await supabaseServiceRequest('/rest/v1/ben_entretiens', {
       method: 'POST',

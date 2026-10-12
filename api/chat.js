@@ -188,6 +188,7 @@ function buildSystemPrompt(visitor) {
 
 const SYNTHESIS_MARKER = '[[GENERATE_SYNTHESIS]]';
 const STRUCTURED_DATA_MARKER = '[[STRUCTURED_DATA]]';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function callAnthropic(system, messages) {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -218,6 +219,12 @@ async function saveEntretien(visitor, structuredData, syntheseTexte) {
   const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
   if (!SUPABASE_URL || !SUPABASE_KEY) {
     return { ok: false, error: 'Variables Supabase manquantes côté serveur (SUPABASE_URL / SUPABASE_ANON_KEY).' };
+  }
+  // Téléphone (facultatif) saisi dans le formulaire d'identité : rangé dans
+  // donnees_structurees.identite.telephone plutôt que dans une colonne dédiée,
+  // pour ne pas dépendre d'une modification du schéma Supabase.
+  if (structuredData && visitor.telephone) {
+    structuredData.identite = Object.assign({}, structuredData.identite || {}, { telephone: String(visitor.telephone).trim() });
   }
   const payload = {
     vertical: (structuredData && structuredData.identite && structuredData.identite.vertical) || 'zoo',
@@ -521,6 +528,44 @@ module.exports = async function handler(req, res) {
   try {
     const body = req.body || {};
 
+    // Reprise : l'exploitant revient via son lien personnel (index.html?reprise=<id>,
+    // envoyé par l'email de relance). On renvoie uniquement ce qu'il faut pour
+    // réafficher sa synthèse modifiable et le bouton de validation.
+    // Même niveau de protection que confirmSynthese : un UUID non devinable.
+    if (body.action === 'getSynthese') {
+      const entretienId = String(body.entretienId || '');
+      if (!UUID_PATTERN.test(entretienId)) {
+        res.status(400).json({ error: 'Lien de reprise invalide.' });
+        return;
+      }
+      try {
+        const rows = await supabaseServiceRequest(
+          '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(entretienId) +
+          '&select=id,prenom,nom,email,nom_site,vertical,synthese_texte,statut,archive',
+          { method: 'GET' }
+        );
+        const row = rows && rows[0];
+        if (!row || row.archive) {
+          res.status(404).json({ error: 'Entretien introuvable.' });
+          return;
+        }
+        res.status(200).json({
+          entretienId: row.id,
+          prenom: row.prenom || '',
+          nom: row.nom || '',
+          email: row.email || '',
+          nomSite: row.nom_site || '',
+          vertical: row.vertical || '',
+          syntheseTexte: row.synthese_texte || '',
+          statut: row.statut,
+          calendlyUrl: row.statut === 'valide' ? (process.env.CALENDLY_URL || null) : null
+        });
+      } catch (err) {
+        res.status(500).json({ error: err.message || 'Erreur lors de la reprise.' });
+      }
+      return;
+    }
+
     // Action déclenchée par le bouton "Valider ma synthèse" côté exploitant :
     // marque l'entretien comme validé, calcule la shortlist d'opérateurs et
     // envoie les notifications (vous + exploitant avec le lien Calendly).
@@ -536,6 +581,20 @@ module.exports = async function handler(req, res) {
         return;
       }
       try {
+        // Garde-fou : une synthèse déjà validée (double clic, lien de reprise
+        // rouvert après validation) n'est ni re-scorée ni re-notifiée.
+        const existing = await supabaseServiceRequest(
+          '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(entretienId) + '&select=statut',
+          { method: 'GET' }
+        );
+        if (!existing || !existing[0]) {
+          res.status(404).json({ error: 'Entretien introuvable.' });
+          return;
+        }
+        if (existing[0].statut === 'valide') {
+          res.status(200).json({ ok: true, alreadyValidated: true, calendlyUrl: process.env.CALENDLY_URL || null });
+          return;
+        }
         const patchPayload = { statut: 'valide', valide_at: new Date().toISOString() };
         if (syntheseTexte !== null) {
           patchPayload.synthese_texte = syntheseTexte;

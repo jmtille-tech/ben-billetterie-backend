@@ -797,7 +797,10 @@ function buildEntretienCard(row) {
       (row.nom_site || (row.prenom + ' ' + row.nom)) +
       '</div>' +
       '<div class="card-meta">' +
-      (row.prenom + ' ' + row.nom + (row.email ? ' (' + row.email + ')' : '') + ' — ' + (row.fonction || '') + ' · ' + formatDate(row.created_at)) +
+      (row.prenom + ' ' + row.nom + (row.email ? ' (' + row.email + ')' : '') +
+        (row.donnees_structurees && row.donnees_structurees.identite && row.donnees_structurees.identite.telephone
+          ? ' · tél. ' + escapeHtml(row.donnees_structurees.identite.telephone) : '') +
+        ' — ' + (row.fonction || '') + ' · ' + formatDate(row.created_at)) +
       ' <span class="badge ' + row.statut + '">' + statutLabel + '</span>' +
       '</div>';
     head.addEventListener('click', function () {
@@ -902,8 +905,49 @@ function buildEntretienCard(row) {
     } else {
       const pendingNote = document.createElement('span');
       pendingNote.className = 'card-meta';
-      pendingNote.textContent = "En attente de validation par l'exploitant.";
+      if (row.relance_envoyee_at) {
+        const rappel = new Date(new Date(row.relance_envoyee_at).getTime() + 24 * 3600 * 1000);
+        pendingNote.textContent = 'En attente — relance envoyée le ' + formatDate(row.relance_envoyee_at) +
+          (rappel < new Date() ? ' · à rappeler de vive voix' : ' · rappel prévu le ' + formatDate(rappel.toISOString()));
+      } else {
+        pendingNote.textContent = "En attente de validation par l'exploitant.";
+      }
       actions.appendChild(pendingNote);
+
+      // Lien personnel de reprise, à copier dans un email ou à dicter au téléphone.
+      const repriseBtn = document.createElement('button');
+      repriseBtn.className = 'secondary';
+      repriseBtn.textContent = 'Copier le lien de reprise';
+      repriseBtn.addEventListener('click', async function () {
+        const link = 'https://agent-ticketmatch.vercel.app/?reprise=' + encodeURIComponent(row.id);
+        try {
+          await navigator.clipboard.writeText(link);
+          repriseBtn.textContent = 'Lien copié';
+        } catch (err) {
+          window.prompt('Lien de reprise :', link);
+        }
+      });
+      actions.appendChild(repriseBtn);
+
+      // Validation manuelle, quand l'exploitant a donné son accord de vive voix ou par email.
+      const validateBtn = document.createElement('button');
+      validateBtn.className = 'secondary';
+      validateBtn.textContent = 'Marquer comme validé';
+      validateBtn.addEventListener('click', async function () {
+        if (!confirm("Confirmer que l'exploitant a validé sa synthèse (par téléphone ou par email) ? La shortlist sera calculée. Aucun email ne lui sera envoyé.")) return;
+        validateBtn.disabled = true;
+        try {
+          const res = await callAdmin('validate', { id: row.id });
+          row.statut = 'valide';
+          row.valide_at = res.valide_at;
+          row.operateurs_scores = res.result;
+          renderList();
+        } catch (err) {
+          alert(err.message);
+          validateBtn.disabled = false;
+        }
+      });
+      actions.appendChild(validateBtn);
     }
 
     const scoreBtn = document.createElement('button');

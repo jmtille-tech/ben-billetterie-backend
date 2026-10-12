@@ -1,0 +1,24 @@
+# Déclencheur horaire des relances automatiques (api/relances.js).
+# Indépendant de l'offre Vercel : sur l'offre gratuite Vercel, les tâches planifiées
+# ne peuvent tourner qu'une fois par jour, trop peu pour une relance 2 h après l'entretien.
+#
+# Prérequis : dans GitHub, Settings → Secrets and variables → Actions → New repository secret,
+# créer RELANCE_CRON_SECRET avec la même valeur que la variable Vercel du même nom.
+name: Relances Agent TicketMatch
+
+on:
+  schedule:
+    - cron: '7 * * * *'   # toutes les heures, à la 7e minute (heure UTC)
+  workflow_dispatch: {}    # lancement manuel possible depuis l'onglet Actions
+
+jobs:
+  relances:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Appeler l'endpoint de relance
+        env:
+          RELANCE_CRON_SECRET: ${{ secrets.RELANCE_CRON_SECRET }}
+        run: |
+          curl --fail-with-body -sS -X POST \
+            -H "Authorization: Bearer ${RELANCE_CRON_SECRET}" \
+            https://ben-billetterie-backend.vercel.app/api/relances

@@ -191,7 +191,7 @@ module.exports = async function handler(req, res) {
     const results = [];
 
     for (const row of rows || []) {
-      const link = repriseUrl(row.id);
+      const link = repriseUrl(row.public_token);
       if (dryRun) {
         results.push({ id: row.id, statut: row.statut, email: row.email, nom_site: row.nom_site, derniere_activite_at: row.derniere_activite_at || row.created_at, dryRun: true });
         continue;

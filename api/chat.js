@@ -187,6 +187,10 @@ function buildSystemPrompt(visitor) {
 const SYNTHESIS_MARKER = '[[GENERATE_SYNTHESIS]]';
 const STRUCTURED_DATA_MARKER = '[[STRUCTURED_DATA]]';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Identifiant PUBLIC d'un entretien : colonne "public_token" (UUID aléatoire, non devinable)
+// de ben_entretiens (voir supabase/2026-10-13_public_token.sql). Tout ce qui sort vers le
+// navigateur ou vers un email (entretienId, draftId, lien ?reprise=) est ce jeton ; le
+// numéro de ligne "id" (26, 27...) reste interne (admin, scoring) car il est devinable.
 
 async function callAnthropic(system, messages) {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -252,7 +256,7 @@ async function findMatchingDraft(visitor, messages) {
   try {
     const depuis = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     const rows = await supabaseServiceRequest(
-      '/rest/v1/ben_entretiens?select=id,conversation&statut=eq.en_cours' +
+      '/rest/v1/ben_entretiens?select=id,public_token,conversation&statut=eq.en_cours' +
       '&email=eq.' + encodeURIComponent(visitor.email) +
       '&created_at=gt.' + encodeURIComponent(depuis) +
       '&order=created_at.desc&limit=10',
@@ -262,7 +266,7 @@ async function findMatchingDraft(visitor, messages) {
       const m = r.conversation && Array.isArray(r.conversation.messages) ? r.conversation.messages : [];
       return m[1] && m[1].role === 'assistant' && String(m[1].content || '') === accueil;
     });
-    return match ? match.id : null;
+    return match ? match.public_token : null;
   } catch (err) {
     return null;
   }
@@ -276,7 +280,7 @@ async function saveDraft(visitor, messages, draftId) {
       // Mise à jour du brouillon, uniquement s'il est toujours "en_cours"
       // (jamais d'écrasement d'un entretien déjà terminé).
       await supabaseServiceRequest(
-        '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(draftId) + '&statut=eq.en_cours',
+        '/rest/v1/ben_entretiens?public_token=eq.' + encodeURIComponent(draftId) + '&statut=eq.en_cours',
         {
           method: 'PATCH',
           headers: { Prefer: 'return=minimal' },
@@ -292,7 +296,7 @@ async function saveDraft(visitor, messages, draftId) {
     const existingId = await findMatchingDraft(visitor, messages);
     if (existingId) {
       await supabaseServiceRequest(
-        '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(existingId) + '&statut=eq.en_cours',
+        '/rest/v1/ben_entretiens?public_token=eq.' + encodeURIComponent(existingId) + '&statut=eq.en_cours',
         {
           method: 'PATCH',
           headers: { Prefer: 'return=minimal' },
@@ -317,7 +321,7 @@ async function saveDraft(visitor, messages, draftId) {
         derniere_activite_at: now
       })
     });
-    const id = rows && rows[0] ? rows[0].id : null;
+    const id = rows && rows[0] ? rows[0].public_token : null;
     return id ? { ok: true, id: id } : { ok: false, error: 'Brouillon non créé.' };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -353,7 +357,7 @@ async function saveEntretien(visitor, structuredData, syntheseTexte, draftId) {
   if (draftId) {
     try {
       const rows = await supabaseServiceRequest(
-        '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(draftId) + '&statut=eq.en_cours',
+        '/rest/v1/ben_entretiens?public_token=eq.' + encodeURIComponent(draftId) + '&statut=eq.en_cours',
         {
           method: 'PATCH',
           headers: { Prefer: 'return=representation' },
@@ -361,7 +365,7 @@ async function saveEntretien(visitor, structuredData, syntheseTexte, draftId) {
         }
       );
       if (rows && rows[0]) {
-        return { ok: true, id: rows[0].id };
+        return { ok: true, id: rows[0].public_token };
       }
     } catch (err) {
       // On retombe sur l'insertion classique ci-dessous.
@@ -385,7 +389,7 @@ async function saveEntretien(visitor, structuredData, syntheseTexte, draftId) {
       return { ok: false, error: 'Écriture Supabase refusée (' + response.status + ') : ' + errText };
     }
     const rows = await response.json();
-    const id = rows && rows[0] ? rows[0].id : null;
+    const id = rows && rows[0] ? rows[0].public_token : null;
     return { ok: true, id: id };
   };
   try {
@@ -680,7 +684,7 @@ module.exports = async function handler(req, res) {
       }
       try {
         const rows = await supabaseServiceRequest(
-          '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(entretienId) + '&select=*',
+          '/rest/v1/ben_entretiens?public_token=eq.' + encodeURIComponent(entretienId) + '&select=*',
           { method: 'GET' }
         );
         const row = rows && rows[0];
@@ -689,7 +693,7 @@ module.exports = async function handler(req, res) {
           return;
         }
         res.status(200).json({
-          entretienId: row.id,
+          entretienId: row.public_token,
           prenom: row.prenom || '',
           nom: row.nom || '',
           email: row.email || '',
@@ -711,27 +715,29 @@ module.exports = async function handler(req, res) {
     // marque l'entretien comme validé, calcule la shortlist d'opérateurs et
     // envoie les notifications (vous + exploitant avec le lien Calendly).
     // Ne nécessite pas de mot de passe (public, appelé depuis index.html) —
-    // seul un entretienId (UUID Supabase, non devinable) est requis.
+    // seul un entretienId (jeton public UUID, non devinable) est requis.
     if (body.action === 'confirmSynthese') {
-      const entretienId = body.entretienId;
+      const entretienToken = String(body.entretienId || '');
       // L'exploitant a pu modifier le texte du récapitulatif pendant sa relecture ;
       // si un texte est fourni, on l'enregistre en même temps que la validation.
       const syntheseTexte = typeof body.syntheseTexte === 'string' ? body.syntheseTexte : null;
-      if (!entretienId) {
-        res.status(400).json({ error: 'entretienId manquant.' });
+      if (!UUID_PATTERN.test(entretienToken)) {
+        res.status(400).json({ error: 'entretienId manquant ou invalide.' });
         return;
       }
       try {
         // Garde-fou : une synthèse déjà validée (double clic, lien de reprise
         // rouvert après validation) n'est ni re-scorée ni re-notifiée.
         const existing = await supabaseServiceRequest(
-          '/rest/v1/ben_entretiens?id=eq.' + encodeURIComponent(entretienId) + '&select=statut',
+          '/rest/v1/ben_entretiens?public_token=eq.' + encodeURIComponent(entretienToken) + '&select=id,statut',
           { method: 'GET' }
         );
         if (!existing || !existing[0]) {
           res.status(404).json({ error: 'Entretien introuvable.' });
           return;
         }
+        // Numéro de ligne interne, utilisé pour la suite (mise à jour, scoring).
+        const entretienId = existing[0].id;
         if (existing[0].statut === 'valide') {
           res.status(200).json({ ok: true, alreadyValidated: true, calendlyUrl: process.env.CALENDLY_URL || null });
           return;
